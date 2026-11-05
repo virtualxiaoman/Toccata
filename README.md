@@ -63,6 +63,8 @@
 
 适用于 **Apple Silicon Mac · macOS 13+**。从 [Releases](https://github.com/KMnO4-zx/Toccata/releases) 下载 DMG，将 `Toccata.app` 拖入“应用程序”即可安装。
 
+Windows 用户可在仓库根目录双击 `run.bat`，运行项目内的任务管理与键盘活跃版本；环境与数据都保存在项目目录中，详见 [apps/toccata-windows/README.md](apps/toccata-windows/README.md)。托盘与安装包仍在开发中。
+
 安装支持应用内更新的版本后，可在“关于 Toccata → 检查更新”中下载新版，下载完成后点击“安装并重启”。下载支持取消和重试，安装前会保存任务与键盘记录；没有兼容安装包时仍可打开发布页。旧版本首次升级仍需手动安装。
 
 键盘记录需要在“系统设置 → 隐私与安全性 → 输入监控”中授权；任务管理可以独立使用。

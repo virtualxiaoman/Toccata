@@ -26,6 +26,8 @@
 
 传输为 Unix domain stream socket。每条消息是一行 UTF-8 JSON，以 `\n` 结尾。
 
+Windows 客户端目前不启动独立 helper，也不提供 Unix socket：键盘采集与界面在同一进程内完成，界面通过命令读取 `toccata.db`。下面的 JSON 消息结构仍是 macOS 端的实时契约。
+
 ### 客户端 → 后台服务
 
 ```json
@@ -57,7 +59,7 @@
 
 | 字段 | 含义 |
 |---|---|
-| `keycode` | macOS CGKeyCode；Lock / Power 归一化为 `127` |
+| `keycode` | macOS 为 CGKeyCode；Windows 为 Windows 虚拟键码（VK）。两端键码空间不同，`key_events` 不能跨平台混用。 |
 | `kind` | `down` 或 `up` |
 | `ts` | Unix epoch 毫秒 |
 | `app` | 事件发生时前台应用的 bundle ID，可能为 `null` |
@@ -158,7 +160,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at   REAL NOT NULL,
   completed_at REAL,
   is_pinned    INTEGER NOT NULL DEFAULT 0,
-  subtask_order INTEGER
+  subtask_order INTEGER,
+  planned_has_time INTEGER NOT NULL DEFAULT 0,
+  reminder_enabled INTEGER NOT NULL DEFAULT 0,
+  reminder_lead_minutes INTEGER,
+  notified_at   REAL
 );
 CREATE INDEX IF NOT EXISTS task_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS task_completed ON tasks(completed_at);
@@ -174,6 +180,8 @@ CREATE INDEX IF NOT EXISTS progress_task ON task_progress(task_id, created_at);
 ```
 
 任务库中全部 `*_at` 字段使用 **Unix epoch 秒（REAL）**，与键盘库的整数毫秒不同。`id` 为 UUID 字符串；`parent_id = NULL` 表示顶层任务。当前界面支持一级子任务，存储层保留递归父子关系。
+
+Windows 客户端使用以下扩展字段；macOS 端可忽略：`planned_has_time` 表示 `planned_at` 是否包含具体时间，`reminder_enabled` 控制任务提醒，`reminder_lead_minutes` 为提前分钟（`NULL` 表示使用界面默认值），`notified_at` 记录最近一次已发送提醒的时间，防止重复提醒。修改计划时间或提醒设置时应清空 `notified_at`。
 
 `is_pinned` 只用于主任务，`0` 为默认、`1` 为置顶。对子任务的置顶操作会更新所属主任务，子任务跟随主任务整组展示。旧库在 `BEGIN IMMEDIATE` 事务中添加缺失的 `is_pinned` 列，默认 `0`；旧 `priority` 列保留在磁盘上但不再读取或写入，也不会自动转换为置顶。重复打开不会重复迁移或丢失任务内容。
 

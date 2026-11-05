@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toccata</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-checklist" viewBox="0 0 24 24">
+      <path d="M4 6.5l1.4 1.4L8 5.4"/><path d="M4 12l1.4 1.4L8 10.9"/><path d="M4 17.5l1.4 1.4L8 16.4"/>
+      <path d="M11.5 6.5H21M11.5 12H21M11.5 17.5H21"/>
+    </symbol>
+    <symbol id="i-tray" viewBox="0 0 24 24">
+      <path d="M4.5 5.5h15v13h-15z"/><path d="M4.5 12h4l1.5 2.2h4L15.5 12h4"/>
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/>
+      <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/>
+    </symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.3 2.3 4.7-5"/>
+    </symbol>
+    <symbol id="i-waveform" viewBox="0 0 24 24">
+      <path d="M3 12h2.2l2.1-6 3 12 3-9 2 3H21"/>
+    </symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24">
+      <path d="M4 20V10M10 20V4M16 20v-7M2 20h20"/>
+    </symbol>
+    <symbol id="i-info" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r=".9" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.5 3.6 5.4 3.6 8.5S14.4 18 12 20.5C9.6 18 8.4 15.1 8.4 12S9.6 6 12 3.5z"/>
+    </symbol>
+    <symbol id="i-plus-circle" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>
+    </symbol>
+    <symbol id="i-return" viewBox="0 0 24 24">
+      <path d="M20 6v6a4 4 0 0 1-4 4H5"/><path d="M9 12l-4 4 4 4"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>
+    </symbol>
+    <symbol id="i-x-circle" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/>
+    </symbol>
+    <symbol id="i-text" viewBox="0 0 24 24">
+      <path d="M4 6h16M4 12h11M4 18h16"/>
+    </symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24">
+      <rect x="4.5" y="3.5" width="15" height="17" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>
+    </symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24">
+      <path d="M9 3h6l-1 6 3.5 3.5H6.5L10 9z"/><path d="M12 12.5V21"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/>
+    </symbol>
+    <symbol id="i-save" viewBox="0 0 24 24">
+      <path d="M12 3v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 18.5h16"/>
+    </symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M14.5 5l-7 7 7 7"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9.5 5l7 7-7 7"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M5 9.5l7 7 7-7"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24">
+      <path d="M7 4v16M4 17l3 3 3-3"/><path d="M17 20V4M14 7l3-3 3 3"/>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24">
+      <circle cx="9" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="7" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="9" cy="17" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="1" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24">
+      <path d="M4 5h16v14H4z"/><path d="M4 13h4.5l1.5 2h4l1.5-2H20"/>
+    </symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24">
+      <path d="M6 16h12l-1.5-2.5V9a4.5 4.5 0 0 0-9 0v4.5L6 16z"/>
+      <path d="M10 19a2 2 0 0 0 4 0"/>
+    </symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M12 2.8v2.4M12 18.8v2.4M4.5 12H2.1M21.9 12h-2.4M6.2 6.2 4.5 4.5M19.5 19.5l-1.7-1.7M17.8 6.2l1.7-1.7M4.5 19.5l1.7-1.7"/>
+    </symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>
+    </symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/toccata-mark.png" alt="">
+        <div class="brand-copy">
+          <div class="brand-name">Toccata</div>
+          <div class="brand-tagline">记下想法，看见投入</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <div class="nav-group">
+          <div class="nav-title">任务</div>
+          <button class="nav-item" data-view="tasks">
+            <svg class="icon"><use href="#i-checklist"></use></svg><span>任务</span>
+          </button>
+          <button class="nav-item" data-view="inbox">
+            <svg class="icon"><use href="#i-tray"></use></svg><span>收集箱</span>
+            <span class="nav-count" id="inbox-count"></span>
+          </button>
+          <button class="nav-item" data-view="calendar">
+            <svg class="icon"><use href="#i-calendar"></use></svg><span>任务日历</span>
+          </button>
+          <button class="nav-item" data-view="review">
+            <svg class="icon"><use href="#i-check-circle"></use></svg><span>任务回顾</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">时间与活动</div>
+          <button class="nav-item" data-view="activity">
+            <svg class="icon"><use href="#i-waveform"></use></svg><span>键盘活跃</span>
+          </button>
+          <button class="nav-item" data-view="ranking">
+            <svg class="icon"><use href="#i-chart"></use></svg><span>应用与趋势</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="sidebar-foot">
+        <button id="open-settings" class="foot-item foot-button">
+          <svg class="icon"><use href="#i-gear"></use></svg><span>设置</span>
+        </button>
+        <div class="foot-item">
+          <svg class="icon"><use href="#i-info"></use></svg>
+          <span>关于 Toccata</span><span class="foot-version">v0.1.4</span>
+        </div>
+        <div class="foot-item">
+          <svg class="icon"><use href="#i-globe"></use></svg>
+          <span>简体中文</span>
+        </div>
+        <div class="foot-note">数据保存在项目内<br><code>data/tasks.sqlite</code></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section id="tasks-area" class="tasks-area">
+        <section class="list-pane">
+          <header class="pane-head">
+            <div class="head-row">
+              <div class="head-copy">
+                <h1 id="view-title">任务</h1>
+                <p id="view-sub"></p>
+              </div>
+              <button id="copy-review" class="soft-btn hidden">
+                <svg class="icon"><use href="#i-doc"></use></svg><span>复制回顾</span>
+              </button>
+            </div>
+
+            <div id="period-control" class="segmented">
+              <button data-period="week" class="active">本周</button>
+              <button data-period="recent">最近 7 天</button>
+            </div>
+
+            <div id="quick-add" class="quick-add">
+              <button id="add-btn" class="add-circle" title="添加任务，不预设日期" aria-label="添加任务">
+                <svg class="icon"><use href="#i-plus-circle"></use></svg>
+              </button>
+              <input id="new-task" type="text" placeholder="添加任务简要描述，回车确认" autocomplete="off" maxlength="200">
+              <button id="add-enter" class="return" title="添加任务" aria-label="添加任务">
+                <svg class="icon"><use href="#i-return"></use></svg>
+              </button>
+            </div>
+
+            <div id="review-summary" class="review-summary hidden"></div>
+
+            <div class="filter-row">
+              <label class="search">
+                <svg class="icon"><use href="#i-search"></use></svg>
+                <input id="search" type="text" placeholder="搜索任务名称与详情" autocomplete="off">
+                <button id="clear-search" class="search-clear hidden" title="清除搜索" aria-label="清除搜索">
+                  <svg class="icon"><use href="#i-x-circle"></use></svg>
+                </button>
+              </label>
+              <button id="display-toggle" class="soft-btn" title="切换列表显示">
+                <span id="display-label">仅标题</span>
+                <svg class="icon small"><use href="#i-chevron-down"></use></svg>
+              </button>
+              <div class="sort-wrap">
+                <svg class="icon sort-icon"><use href="#i-sort"></use></svg>
+                <select id="sort-select" aria-label="排序方式">
+                  <option value="manual">手动</option>
+                  <option value="created-desc">创建时间从新到旧</option>
+                  <option value="created-asc">创建时间从旧到新</option>
+                  <option value="title">任务名称</option>
+                  <option value="planned">计划时间</option>
+                </select>
+              </div>
+            </div>
+          </header>
+
+          <div id="tasks-scroll" class="pane-scroll">
+            <div id="task-list" class="task-list"></div>
+            <div id="empty" class="empty hidden">
+              <div class="empty-icon"><svg class="icon big"><use href="#i-inbox"></use></svg></div>
+              <h2 id="empty-title">这个视图还没有任务</h2>
+              <p id="empty-text"></p>
+            </div>
+          </div>
+
+          <footer id="list-foot" class="pane-foot">
+            <svg class="icon"><use href="#i-checklist"></use></svg>
+            <span>视图按时间组织任务，不会自动设置计划日期</span>
+          </footer>
+        </section>
+
+        <aside id="detail-pane" class="detail-pane">
+          <div id="detail-empty" class="detail-empty">
+            <svg class="icon big"><use href="#i-text"></use></svg>
+            <p>选择一个任务查看详情</p>
+            <span>可以编辑名称、计划日期、Markdown 详情和子任务。</span>
+          </div>
+
+          <div id="detail" class="detail hidden">
+            <div class="detail-bar">
+              <button id="back-parent" class="back-parent hidden">
+                <svg class="icon"><use href="#i-chevron-left"></use></svg>
+                <span id="back-title"></span>
+              </button>
+              <span id="detail-label" class="detail-label">
+                <svg class="icon"><use href="#i-text"></use></svg><span>任务详情</span>
+              </span>
+              <div class="bar-right">
+                <span id="save-state" class="save-state">已保存</span>
+                <button id="save-btn" class="bar-btn" title="保存修改">
+                  <svg class="icon"><use href="#i-save"></use></svg>
+                </button>
+                <button id="pin-btn" class="bar-btn" title="置顶任务">
+                  <svg class="icon"><use href="#i-pin"></use></svg>
+                </button>
+                <button id="delete-btn" class="bar-btn danger" title="删除任务">
+                  <svg class="icon"><use href="#i-trash"></use></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="detail-scroll">
+              <div class="complete-row">
+                <button id="complete-btn" class="complete-toggle">
+                  <span id="complete-ring" class="complete-ring"></span>
+                  <span id="complete-label">标记完成</span>
+                </button>
+                <span id="completed-at" class="completed-at"></span>
+              </div>
+
+              <textarea id="edit-title" class="title-input" rows="1" maxlength="200" placeholder="任务名称"></textarea>
+
+              <section class="section date-section">
+                <div class="section-title">计划日期与时间</div>
+                <div id="date-card" class="date-card" role="button" tabindex="0" aria-label="选择计划日期和时间">
+                  <div class="date-icon"><svg class="icon"><use href="#i-calendar"></use></svg></div>
+                  <div class="date-copy">
+                    <div id="planned-label">添加计划日期</div>
+                    <div id="planned-sub">可选择日期与具体时间</div>
+                  </div>
+                  <svg class="icon date-chevron"><use href="#i-chevron-down"></use></svg>
+                </div>
+                <div id="date-popover" class="date-popover hidden">
+                  <label class="popover-field">
+                    <span>日期</span>
+                    <input id="edit-date" type="date">
+                  </label>
+                  <label class="popover-field">
+                    <span>时间</span>
+                    <input id="edit-time" type="time" step="1">
+                  </label>
+                  <div class="popover-actions">
+                    <button id="date-clear" class="link-btn" type="button">清除</button>
+                    <button id="date-apply" class="soft-btn small" type="button">完成</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="section">
+                <div class="section-head">
+                  <div class="section-title with-icon">
+                    <svg class="icon"><use href="#i-bell"></use></svg><span>提醒</span>
+                  </div>
+                  <label class="switch" title="开启或关闭提醒">
+                    <input id="reminder-toggle" type="checkbox">
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div class="reminder-row">
+                  <label class="reminder-lead">提前
+                    <input id="reminder-lead" type="number" min="0" max="10080" step="1">
+                    分钟
+                  </label>
+                  <span id="reminder-at" class="section-meta"></span>
+                  <button id="reminder-defaults" class="link-btn" type="button">设置</button>
+                </div>
+                <p class="hint">默认不提醒；日期任务开启提醒时使用默认提醒时间，可在默认设置中修改。</p>
+              </section>
+
+              <section class="section">
+                <div class="section-head">
+                  <div class="section-title with-icon">
+                    <svg class="icon"><use href="#i-text"></use></svg><span>详情</span>
+                  </div>
+                  <button id="preview-btn" class="link-btn">预览</button>
+                </div>
+                <textarea id="edit-details" class="details-input" spellcheck="false"
+                          placeholder="补充背景、链接，或写下你打算怎么做…"></textarea>
+                <div id="details-preview" class="markdown hidden"></div>
+              </section>
+
+              <section class="section">
+                <div class="section-head">
+                  <div class="section-title with-icon">
+                    <svg class="icon"><use href="#i-checklist"></use></svg><span>子任务</span>
+                  </div>
+                  <span id="subtask-count" class="section-meta"></span>
+                </div>
+                <div id="subtask-list" class="subtask-list"></div>
+                <div id="subtask-add" class="subtask-add">
+                  <svg class="icon add-mark"><use href="#i-plus-circle"></use></svg>
+                  <input id="new-subtask" type="text" placeholder="添加子任务，按回车确认" autocomplete="off" maxlength="200">
+                  <svg class="icon return-mark"><use href="#i-return"></use></svg>
+                </div>
+                <p id="subtask-note" class="subtask-note hidden">这是一个子任务，可在这里独立编辑详情。</p>
+              </section>
+
+              <div id="metadata" class="metadata"></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="calendar-pane" class="calendar-pane hidden">
+        <header class="calendar-head">
+          <div class="head-copy">
+            <h1>任务日历</h1>
+            <p>按月查看任务的创建、计划与完成日期。</p>
+          </div>
+          <div class="calendar-nav">
+            <button id="cal-prev" class="icon-btn" title="上个月"><svg class="icon"><use href="#i-chevron-left"></use></svg></button>
+            <span id="cal-month" class="cal-month"></span>
+            <button id="cal-next" class="icon-btn" title="下个月"><svg class="icon"><use href="#i-chevron-right"></use></svg></button>
+            <button id="cal-today" class="soft-btn">今天</button>
+          </div>
+        </header>
+        <div class="calendar-body">
+          <div class="month-panel">
+            <div class="weekday-row">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+            </div>
+            <div id="calendar-grid" class="calendar-grid"></div>
+            <div class="calendar-legend">
+              <span><i class="dot created"></i>创建</span>
+              <span><i class="dot planned"></i>计划</span>
+              <span><i class="dot completed"></i>完成</span>
+              <span><i class="dot overdue"></i>逾期未完成</span>
+            </div>
+          </div>
+          <aside class="day-panel">
+            <div class="day-panel-head">
+              <h2 id="day-title"></h2>
+              <span id="day-count" class="section-meta"></span>
+            </div>
+            <div id="day-tasks" class="day-tasks"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="data-pane" class="data-pane hidden"></section>
+    </main>
+  </div>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-card settings-card">
+      <div class="settings-layout">
+        <aside class="settings-nav">
+          <h2>设置</h2>
+          <button class="settings-tab active" data-settings-tab="reminder">提醒</button>
+          <button class="settings-tab" data-settings-tab="window">窗口</button>
+        </aside>
+        <section class="settings-body">
+          <div id="settings-reminder" class="settings-pane">
+            <h3>提醒</h3>
+            <label class="setting-row">
+              <span><strong>新建任务默认开启提醒</strong><small>默认关闭</small></span>
+              <input id="setting-default-enabled" type="checkbox">
+            </label>
+            <label class="setting-row">
+              <span><strong>默认提前提醒</strong><small>0 表示到点提醒</small></span>
+              <span class="setting-inline"><input id="setting-lead" type="number" min="0" max="10080" step="1"> 分钟</span>
+            </label>
+            <label class="setting-row">
+              <span><strong>日期任务默认提醒时间</strong><small>只设置日期时使用</small></span>
+              <input id="setting-time" type="time" step="60">
+            </label>
+            <label class="setting-row">
+              <span><strong>全屏应用时静默</strong><small>游戏或视频全屏时不弹窗</small></span>
+              <input id="setting-fullscreen" type="checkbox">
+            </label>
+            <p class="settings-note">
+              提醒会以应用内弹窗和 Windows 通知提示。全屏静默开启时，退出全屏后会继续提醒。
+            </p>
+          </div>
+
+          <div id="settings-window" class="settings-pane hidden">
+            <h3>窗口</h3>
+            <p class="settings-caption">点击关闭按钮后：</p>
+            <label class="choice-row">
+              <input type="radio" name="close-mode" value="minimize">
+              <span><strong>最小化到任务栏</strong><small>继续记录键盘活动和提醒</small></span>
+            </label>
+            <label class="choice-row">
+              <input type="radio" name="close-mode" value="exit">
+              <span><strong>退出应用</strong><small>停止提醒和键盘记录</small></span>
+            </label>
+            <label class="choice-row">
+              <input type="radio" name="close-mode" value="ask">
+              <span><strong>每次询问</strong><small>关闭时选择最小化或退出</small></span>
+            </label>
+            <p class="settings-note">
+              首次关闭会询问一次；勾选「不再询问」后会记住选择，也可以在这里修改。
+            </p>
+          </div>
+
+          <div class="settings-footer">
+            <button id="settings-close" class="soft-btn" type="button">完成</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="close-modal" class="modal hidden">
+    <div class="modal-card close-card">
+      <h2>关闭窗口</h2>
+      <p class="settings-caption">要最小化到任务栏，还是退出 Toccata？</p>
+      <label class="choice-row">
+        <input type="radio" name="close-choice" value="minimize" checked>
+        <span><strong>最小化到任务栏</strong><small>继续记录键盘活动和提醒</small></span>
+      </label>
+      <label class="choice-row">
+        <input type="radio" name="close-choice" value="exit">
+        <span><strong>退出应用</strong><small>停止提醒和键盘记录</small></span>
+      </label>
+      <label class="check-row">
+        <input id="close-remember" type="checkbox" checked>
+        <span>不再询问</span>
+      </label>
+      <div class="modal-actions">
+        <button id="close-cancel" class="soft-btn" type="button">取消</button>
+        <button id="close-confirm" class="soft-btn primary-soft" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="reminder-modal" class="modal hidden">
+    <div class="modal-card reminder-card">
+      <div class="reminder-eyebrow"><svg class="icon"><use href="#i-bell"></use></svg>任务提醒</div>
+      <h2 id="reminder-title"></h2>
+      <p id="reminder-when" class="reminder-when"></p>
+      <div class="modal-actions">
+        <button id="reminder-dismiss" class="soft-btn" type="button">知道了</button>
+        <button id="reminder-open" class="soft-btn primary-soft" type="button">打开任务</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm" class="modal hidden">
+    <div class="modal-card">
+      <h2>删除这个任务？</h2>
+      <p id="confirm-text"></p>
+      <div class="modal-actions">
+        <button id="confirm-cancel" class="soft-btn" type="button">取消</button>
+        <button id="confirm-ok" class="danger-solid" type="button">删除任务</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
