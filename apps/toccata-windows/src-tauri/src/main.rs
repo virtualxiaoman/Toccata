@@ -2,10 +2,13 @@
 
 mod db;
 mod keyboard;
+mod scheduler;
 
 use db::{Db, Task};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
 fn project_root() -> Option<PathBuf> {
@@ -129,10 +132,10 @@ fn keyboard_snapshot(
 #[tauri::command]
 fn keyboard_daily(
     store: tauri::State<'_, keyboard::KeyboardStore>,
-    start_ms: i64,
-    end_ms: i64,
-) -> Vec<keyboard::DailyCount> {
-    keyboard::daily_counts(&store, start_ms, end_ms)
+    days: Vec<keyboard::DayRange>,
+    now_ms: i64,
+) -> Vec<keyboard::DailyStat> {
+    keyboard::daily_stats(&store, days, now_ms)
 }
 
 #[tauri::command]
@@ -141,16 +144,59 @@ fn capture_status() -> bool {
 }
 
 #[tauri::command]
-fn minimize_main_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn ai_group_sites(app: tauri::AppHandle) -> Result<usize, String> {
+    let db_path = {
+        let store = app.state::<keyboard::KeyboardStore>();
+        store.db_path.clone()
+    };
+    keyboard::ai_group_sites(db_path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn show_main_window_command(app: tauri::AppHandle) {
+    show_main_window(&app);
+}
+
+#[tauri::command]
+fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    window.minimize().map_err(|error| error.to_string())
+    window.hide().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[tauri::command]
+fn autostart_status(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    }
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -203,9 +249,14 @@ fn main() {
     if let Err(error) = keyboard::start(keyboard_path.clone()) {
         eprintln!("[toccata] 键盘采集启动失败：{error:#}");
     }
+    let scheduler_path = keyboard_path.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(Db(Mutex::new(connection)))
         .invoke_handler(tauri::generate_handler![
             list_tasks,
@@ -220,8 +271,19 @@ fn main() {
             keyboard_snapshot,
             keyboard_daily,
             capture_status,
-            minimize_main_window,
-            quit_app
+            ai_group_sites,
+            scheduler::scheduler_state,
+            scheduler::save_official_settings,
+            scheduler::run_official_summary,
+            scheduler::save_scheduled_script,
+            scheduler::delete_scheduled_script,
+            scheduler::set_scheduled_script_enabled,
+            scheduler::run_scheduled_script,
+            show_main_window_command,
+            hide_main_window,
+            quit_app,
+            autostart_status,
+            set_autostart
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -231,6 +293,9 @@ fn main() {
         })
         .manage(keyboard::KeyboardStore {
             db_path: keyboard_path,
+        })
+        .manage(scheduler::SchedulerStore {
+            db_path: scheduler_path.clone(),
         })
         .setup(move |app| {
             let webview_data = directory.join("webview");
@@ -253,6 +318,37 @@ fn main() {
                 window = window.icon(icon)?;
             }
             window.build()?;
+
+            let show_item =
+                MenuItem::with_id(app, "tray-show", "打开 Toccata", true, None::<&str>)?;
+            let quit_item =
+                MenuItem::with_id(app, "tray-quit", "退出 Toccata", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .tooltip("Toccata")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "tray-show" => show_main_window(app),
+                    "tray-quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+            tray.build(app)?;
+
+            scheduler::start(scheduler_path);
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -25,6 +25,10 @@ const VIEW_META = {
   ranking: {
     title: '应用与趋势',
     sub: '按活跃时长查看常用应用与变化趋势。'
+  },
+  scheduler: {
+    title: '定时任务',
+    sub: '让 Toccata 按计划汇总站点或执行本地脚本。'
   }
 };
 
@@ -145,7 +149,6 @@ const state = {
   sort: readSetting('toccata.sortOrder', 'manual'),
   selectedId: null,
   collapsed: new Set(),
-  showCompleted: true,
   detailsEditing: false,
   dirty: false,
   saveState: 'saved',
@@ -154,6 +157,7 @@ const state = {
   reminderSettings: loadReminderSettings(),
   closeMode: readCloseMode(),
   closePromptOpen: false,
+  autostartEnabled: null,
   reminderQueue: [],
   reminderShowing: false,
   reminderTaskId: null,
@@ -165,6 +169,14 @@ const state = {
   activityData: null,
   rankingData: null,
   rankingDaily: null,
+  rankingDailyLoadedDay: null,
+  calendarMetric: readSetting('toccata.calendarMetric', 'keys'),
+  aiGrouping: false,
+  schedulerState: null,
+  schedulerLoading: false,
+  schedulerEditing: false,
+  schedulerForm: null,
+  schedulerOfficialRunning: false,
   activityLoading: false,
   rankingLoading: false,
   captureEnabled: null
@@ -197,7 +209,8 @@ function readSetting(key, fallback) {
 
 function readCloseMode() {
   const value = readSetting('toccata.closeBehavior', 'ask');
-  return ['minimize', 'exit', 'ask'].includes(value) ? value : 'ask';
+  if (value === 'minimize') return 'tray';
+  return ['tray', 'exit', 'ask'].includes(value) ? value : 'ask';
 }
 
 function writeSetting(key, value) {
@@ -597,6 +610,19 @@ function rootOf(task) {
   return current || task;
 }
 
+function taskDepth(task) {
+  let depth = 0;
+  let current = task;
+  const seen = new Set();
+  while (current && current.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = state.byId.get(current.parentId);
+    if (!current) break;
+    depth += 1;
+  }
+  return depth;
+}
+
 function compareTasks(a, b) {
   const pinnedA = a.isPinned ? 0 : 1;
   const pinnedB = b.isPinned ? 0 : 1;
@@ -737,7 +763,7 @@ function renderHeader() {
   if (state.view === 'review') {
     foot.innerHTML = '<svg class="icon"><use href="#i-doc"></use></svg><span>按主任务归组；已完成子任务保留在所属任务下</span>';
   } else {
-    foot.innerHTML = '<svg class="icon"><use href="#i-checklist"></use></svg><span>视图按时间组织任务，不会自动设置计划日期</span>';
+    foot.innerHTML = '<svg class="icon"><use href="#i-checklist"></use></svg><span>仅显示未完成任务；已完成任务可在任务回顾或任务日历中查看</span>';
   }
 
   const item = document.querySelector(`.nav-item[data-view="${state.view}"]`);
@@ -756,7 +782,7 @@ function flattenRows(roots, visibleIds) {
       .filter(child => visibleIds.has(child.id))
       .sort(compareTasks);
     for (const child of children) {
-      if (depth < 2) push(child, depth + 1);
+      if (depth < 5) push(child, depth + 1);
     }
   };
   for (const root of roots) push(root, 0);
@@ -809,63 +835,70 @@ function sectionHeaderHtml(title, collapsible, collapsed) {
 
 function renderList() {
   if (!TASK_VIEWS.includes(state.view)) return;
+  const scroller = document.getElementById('tasks-scroll');
+  const scrollTop = scroller ? scroller.scrollTop : 0;
 
+  const isReview = state.view === 'review';
   const { ids, scopedCount } = visibleTaskIds();
-  const visible = state.tasks.filter(task => ids.has(task.id));
+  const visible = state.tasks.filter(task => ids.has(task.id) && (isReview || !task.completedAt));
+  const treeIds = new Set(visible.map(task => task.id));
   const roots = visible
-    .filter(task => !task.parentId || !ids.has(task.parentId))
+    .filter(task => !task.parentId || !treeIds.has(task.parentId))
     .sort(compareTasks);
   const pendingRoots = roots.filter(task => !task.completedAt);
-  const completedRoots = roots.filter(task => task.completedAt);
+  const completedRoots = isReview ? roots.filter(task => task.completedAt) : [];
 
-  const pendingRows = flattenRows(pendingRoots, ids);
-  const completedRows = flattenRows(completedRoots, ids);
+  const pendingRows = flattenRows(pendingRoots, treeIds);
+  const completedRows = isReview ? flattenRows(completedRoots, treeIds) : [];
   const hasRows = pendingRows.length + completedRows.length > 0;
 
   if (!hasRows) {
     listEl.innerHTML = '';
     emptyEl.classList.remove('hidden');
     const searching = state.query.trim().length > 0;
+    const scopedCompleted = !isReview
+      ? state.tasks.filter(task => ids.has(task.id) && task.completedAt).length
+      : 0;
     const emptyTitle = document.getElementById('empty-title');
     const emptyText = document.getElementById('empty-text');
     if (searching) {
-      emptyTitle.textContent = '没有匹配的任务';
+      emptyTitle.textContent = isReview ? '没有匹配的任务' : '没有匹配的未完成任务';
       emptyText.textContent = '试试其他关键词。';
     } else if (state.view === 'inbox') {
-      emptyTitle.textContent = '先收集，再安排';
-      emptyText.textContent = '把想到的事情放进来。没有计划日期，也可以安心待在这里。';
-    } else if (state.view === 'review') {
+      emptyTitle.textContent = scopedCompleted > 0 ? '没有未完成任务' : '先收集，再安排';
+      emptyText.textContent = scopedCompleted > 0
+        ? '已完成任务已隐藏，可在任务回顾或任务日历中查看。'
+        : '把想到的事情放进来。没有计划日期，也可以安心待在这里。';
+    } else if (isReview) {
       emptyTitle.textContent = '这段时间还没有任务可回顾';
       emptyText.textContent = '本期完成的任务和当前未完成的事项都会出现在这里，方便整理周报。';
     } else {
-      emptyTitle.textContent = '这个视图还没有任务';
-      emptyText.textContent = scopedCount === 0
-        ? '添加一个新任务，或切换范围查看其他记录。'
-        : '调整搜索条件试试。';
+      emptyTitle.textContent = scopedCompleted > 0 ? '没有未完成任务' : '这个视图还没有任务';
+      emptyText.textContent = scopedCompleted > 0
+        ? '已完成任务已隐藏，可在任务回顾或任务日历中查看。'
+        : scopedCount === 0
+          ? '添加一个新任务，或切换范围查看其他记录。'
+          : '调整搜索条件试试。';
     }
+    if (scroller) scroller.scrollTop = scrollTop;
     return;
   }
 
   emptyEl.classList.add('hidden');
 
-  const isReview = state.view === 'review';
   let html = '';
-
   if (isReview) {
     html += sectionHeaderHtml(`已完成主任务 · ${completedRoots.length} 组`, false, false);
-    html += completedRows.map(row => rowHtml(row.task, row.depth, ids)).join('');
+    html += completedRows.map(row => rowHtml(row.task, row.depth, treeIds)).join('');
     html += sectionHeaderHtml(`待推进主任务 · ${pendingRoots.length} 组`, false, false);
-    html += pendingRows.map(row => rowHtml(row.task, row.depth, ids)).join('');
+    html += pendingRows.map(row => rowHtml(row.task, row.depth, treeIds)).join('');
   } else {
     html += sectionHeaderHtml(`待办 · ${pendingRoots.length} 项主任务`, false, false);
-    html += pendingRows.map(row => rowHtml(row.task, row.depth, ids)).join('');
-    html += sectionHeaderHtml(`已完成 · ${completedRoots.length} 项主任务`, true, !state.showCompleted);
-    if (state.showCompleted) {
-      html += completedRows.map(row => rowHtml(row.task, row.depth, ids)).join('');
-    }
+    html += pendingRows.map(row => rowHtml(row.task, row.depth, treeIds)).join('');
   }
 
   listEl.innerHTML = html;
+  if (scroller) scroller.scrollTop = scrollTop;
 }
 
 /* ---------- render: detail ---------- */
@@ -957,9 +990,16 @@ function updateDetailChrome() {
       </div>`;
   }).join('');
 
-  const isSubtask = Boolean(task.parentId);
-  document.getElementById('subtask-add').classList.toggle('hidden', isSubtask);
-  document.getElementById('subtask-note').classList.toggle('hidden', !isSubtask);
+  const depth = taskDepth(task);
+  const canAddSubtask = depth < 5;
+  document.getElementById('subtask-add').classList.toggle('hidden', !canAddSubtask);
+  const subtaskNote = document.getElementById('subtask-note');
+  subtaskNote.classList.toggle('hidden', canAddSubtask);
+  if (!canAddSubtask) {
+    subtaskNote.textContent = '已达到 5 层子任务上限。';
+  } else if (task.parentId) {
+    subtaskNote.textContent = '这是一个子任务，可在这里继续添加子任务或独立编辑详情。';
+  }
 
   const metadata = [`创建于 ${formatFull(task.createdAt)}`];
   if (task.completedAt != null) metadata.push(`完成于 ${formatFull(task.completedAt)}`);
@@ -1243,14 +1283,27 @@ function captureChipHtml() {
   return `<div class="capture-chip ${state.captureEnabled ? 'on' : 'off'}"><i></i>${stateText}</div>`;
 }
 
+function setDataPaneHtml(html) {
+  const top = dataPane.scrollTop;
+  const left = dataPane.scrollLeft;
+  const heatmapLeft = dataPane.querySelector('.heatmap-wrap')?.scrollLeft || 0;
+  dataPane.innerHTML = html;
+  dataPane.scrollTop = top;
+  dataPane.scrollLeft = left;
+  const heatmap = dataPane.querySelector('.heatmap-wrap');
+  if (heatmap) heatmap.scrollLeft = heatmapLeft;
+}
+
 function renderActivity() {
-  const data = state.activityData || { activeMs: 0, keyCount: 0, keyCounts: {}, days: [] };
+  const data = state.activityData || {
+    activeMs: 0, keyCount: 0, mouseLeft: 0, mouseRight: 0, keyCounts: {}, days: []
+  };
   const title = `${activityRangeLabel(state.activityRange)}键盘热力图`;
   const hasData = (data.keyCount || 0) > 0;
   const keysPerMinute = data.activeMs > 0
     ? Math.round((data.keyCount || 0) / (data.activeMs / 60000))
     : null;
-  dataPane.innerHTML = `
+  setDataPaneHtml(`
     <div class="activity-view">
       <header class="data-head">
         <div class="head-copy">
@@ -1280,6 +1333,11 @@ function renderActivity() {
           <strong>${keysPerMinute == null ? '—' : `${keysPerMinute.toLocaleString('zh-CN')} 键/分钟`}</strong>
           <small>按键盘活跃时间平均</small>
         </div>
+        <div class="metric-card">
+          <span>鼠标点击</span>
+          <strong>${(data.mouseLeft || 0).toLocaleString('zh-CN')} / ${(data.mouseRight || 0).toLocaleString('zh-CN')}</strong>
+          <small>左键 / 右键</small>
+        </div>
       </div>
       <section class="data-card">
         <div class="card-head">
@@ -1300,7 +1358,7 @@ function renderActivity() {
         每次有效按下覆盖后续 5 秒，持续按住的时间也计入；重叠区间只计算一次，未被覆盖的停顿不计入。
         键盘活跃时间是一种使用时间估算，阅读、看视频或仅用鼠标时可能没有记录。
       </p>
-    </div>`;
+    </div>`);
 }
 
 function appDisplayName(app) {
@@ -1321,33 +1379,79 @@ function renderAppList(apps) {
   if (!apps || !apps.length) {
     return '<div class="data-empty">这段时间还没有应用使用记录。</div>';
   }
-  const max = Math.max(1, ...apps.map(app => app.activeMs || 1));
-  return `<div class="app-list">${apps.map(app => {
-    const name = appDisplayName(app.app);
+
+  const topLevel = apps
+    .filter(app => !app.parent)
+    .sort((a, b) => (b.activeMs - a.activeMs) || (b.keyCount - a.keyCount));
+  const childrenByParent = new Map();
+  for (const app of apps) {
+    if (!app.parent) continue;
+    if (!childrenByParent.has(app.parent)) childrenByParent.set(app.parent, []);
+    childrenByParent.get(app.parent).push(app);
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) => (b.activeMs - a.activeMs) || (b.keyCount - a.keyCount));
+  }
+
+  const max = Math.max(1, ...topLevel.map(app => app.activeMs || 1));
+  return `<div class="app-list">${topLevel.map(app => {
+    const name = app.label || appDisplayName(app.app);
     const initial = name.slice(0, 1).toUpperCase();
     const ratio = Math.max(2, Math.min(100, (app.activeMs / max) * 100));
+    const children = childrenByParent.get(app.app) || [];
     return `
-      <div class="app-row">
-        <div class="app-icon" style="background:${appColor(app.app)}">${escapeHtml(initial)}</div>
-        <div class="app-main">
-          <div class="app-line">
-            <span class="app-name" title="${escapeHtml(app.app)}">${escapeHtml(name)}</span>
-            <span class="app-duration">${formatDurationMs(app.activeMs)}</span>
-            <span class="app-keys">${app.keyCount.toLocaleString('zh-CN')} 次按键</span>
+      <div class="app-group">
+        <div class="app-row">
+          <div class="app-icon" style="background:${appColor(app.app)}">${escapeHtml(initial)}</div>
+          <div class="app-main">
+            <div class="app-line">
+              <span class="app-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+              <span class="app-duration">${formatDurationMs(app.activeMs)}</span>
+              <span class="app-keys">${app.keyCount.toLocaleString('zh-CN')} 次按键</span>
+            </div>
+            <div class="app-bar"><i style="width:${ratio.toFixed(1)}%"></i></div>
           </div>
-          <div class="app-bar"><i style="width:${ratio.toFixed(1)}%"></i></div>
         </div>
+        ${children.length ? `<div class="app-children">${children.map(child => {
+          const childName = child.label || appDisplayName(child.app);
+          return `
+            <div class="site-row">
+              <span class="site-mark" style="background:${appColor(child.app)}"></span>
+              <span class="site-name">${escapeHtml(childName)}</span>
+              <span class="site-duration">${formatDurationMs(child.activeMs)}</span>
+              <span class="site-keys">${child.keyCount.toLocaleString('zh-CN')} 次</span>
+            </div>`;
+        }).join('')}</div>` : ''}
       </div>`;
   }).join('')}</div>`;
 }
 
-function renderActivityHeatmap(daily) {
-  const counts = new Map();
-  for (const entry of daily || []) counts.set(entry.day, entry.keyCount);
+function heatmapDayRanges() {
+  const today = startOfDay(new Date());
+  const start = addDays(weekStartDate(today), -25 * 7);
+  const days = [];
+  let cursor = new Date(start);
+  while (cursor.getTime() <= today.getTime()) {
+    const next = addDays(cursor, 1);
+    days.push({
+      startMs: cursor.getTime(),
+      endMs: Math.min(next.getTime(), Date.now())
+    });
+    cursor = next;
+  }
+  return days;
+}
+
+function renderActivityHeatmap(daily, metric) {
+  const entries = new Map();
+  for (const entry of daily || []) {
+    entries.set(dayKeyFromDate(new Date(entry.startMs)), entry);
+  }
+  const valueOf = entry => metric === 'time' ? entry.activeMs : entry.keyCount;
   const today = startOfDay(new Date());
   const start = addDays(weekStartDate(today), -25 * 7);
   let max = 1;
-  for (const value of counts.values()) max = Math.max(max, value || 0);
+  for (const entry of entries.values()) max = Math.max(max, valueOf(entry) || 0);
 
   let weeks = '';
   for (let week = 0; week < 26; week += 1) {
@@ -1359,21 +1463,32 @@ function renderActivityHeatmap(daily) {
         continue;
       }
       const key = dayKeyFromDate(date);
-      const count = counts.get(key) || 0;
-      const ratio = count > 0 ? count / max : 0;
-      const level = count === 0 ? 0 : ratio <= 0.25 ? 1 : ratio <= 0.5 ? 2 : ratio <= 0.75 ? 3 : 4;
+      const entry = entries.get(key);
+      const value = entry ? valueOf(entry) : 0;
+      const ratio = value > 0 ? value / max : 0;
+      const level = value === 0 ? 0 : ratio <= 0.25 ? 1 : ratio <= 0.5 ? 2 : ratio <= 0.75 ? 3 : 4;
       const isToday = key === todayKey();
-      cells += `<div class="heat-cell level-${level}${isToday ? ' today' : ''}" title="${key} · ${count} 次按键"></div>`;
+      const tooltip = entry
+        ? `${key} · ${entry.keyCount.toLocaleString('zh-CN')} 次按键 · ${formatDurationMs(entry.activeMs)}`
+        : `${key} · 无记录`;
+      cells += `<div class="heat-cell level-${level}${isToday ? ' today' : ''}" title="${tooltip}"></div>`;
     }
     weeks += `<div class="heat-week">${cells}</div>`;
   }
 
-  const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const totals = [...entries.values()].reduce((result, entry) => {
+    result.keyCount += entry.keyCount || 0;
+    result.activeMs += entry.activeMs || 0;
+    return result;
+  }, { keyCount: 0, activeMs: 0 });
+  const totalText = metric === 'time'
+    ? `共 ${formatDurationMs(totals.activeMs)} 使用时间`
+    : `共 ${totals.keyCount.toLocaleString('zh-CN')} 次按键`;
   return `
     <div class="heatmap-wrap">
       <div class="heatmap-weeks">${weeks}</div>
       <div class="heatmap-foot">
-        <span>最近 26 周 · 共 ${total.toLocaleString('zh-CN')} 次按键</span>
+        <span>最近 26 周 · ${totalText}</span>
         <span class="heatmap-legend">少 <i class="heat-swatch level-1"></i><i class="heat-swatch level-2"></i><i class="heat-swatch level-3"></i><i class="heat-swatch level-4"></i> 多</span>
       </div>
     </div>`;
@@ -1382,39 +1497,415 @@ function renderActivityHeatmap(daily) {
 function renderRanking() {
   const data = state.rankingData || { apps: [], activeMs: 0, keyCount: 0 };
   const days = dayRangesForRange(state.rankingRange);
-  dataPane.innerHTML = `
+  setDataPaneHtml(`
     <div class="activity-view">
       <header class="data-head">
         <div class="head-copy">
           <h1>应用与趋势</h1>
-          <p>回看键盘活动与应用使用趋势。</p>
+          <p>回看键盘活动与应用、网页使用趋势。</p>
         </div>
         ${captureChipHtml()}
       </header>
       <section class="data-card">
         <div class="card-head">
-          <h2>活跃日历</h2>
-          <span class="section-meta">颜色越深，按键次数越多</span>
+          <div class="calendar-heading">
+            <h2>活跃日历</h2>
+            <span class="section-meta">${state.calendarMetric === 'time' ? '颜色越深，使用时间越长' : '颜色越深，按键次数越多'}</span>
+          </div>
+          <div class="segmented calendar-metric">
+            <button data-calendar-metric="keys" class="${state.calendarMetric === 'keys' ? 'active' : ''}">键盘</button>
+            <button data-calendar-metric="time" class="${state.calendarMetric === 'time' ? 'active' : ''}">使用时间</button>
+          </div>
         </div>
-        ${renderActivityHeatmap(state.rankingDaily)}
+        ${renderActivityHeatmap(state.rankingDaily, state.calendarMetric)}
       </section>
       <section class="data-card">
         <div class="card-head">
-          <h2>应用活跃度</h2>
-          <span class="section-meta">按键盘活动估算使用时间</span>
+          <div class="calendar-heading">
+            <h2>应用与网页活跃度</h2>
+            <span class="section-meta">按键盘活动估算使用时间，浏览器站点显示为子项</span>
+          </div>
+          <button class="soft-btn small" data-ai-group ${state.aiGrouping ? 'disabled' : ''}>
+            ${state.aiGrouping ? '汇总中…' : 'AI 汇总站点'}
+          </button>
         </div>
         <div class="range-row compact">
           <div class="segmented">${rangeButtons('ranking', state.rankingRange)}</div>
           <span class="range-dates">${days.length ? formatLongDate(days[0].startMs / 1000) : ''}${days.length > 1 ? ' 起' : ''}</span>
           <span class="section-meta">${formatDurationMs(data.activeMs || 0)} · ${(data.keyCount || 0).toLocaleString('zh-CN')} 次按键</span>
         </div>
-        ${state.rankingLoading ? '<div class="data-empty">正在读取应用使用记录…</div>' : renderAppList(data.apps)}
+        ${state.rankingLoading && !state.rankingData ? '<div class="data-empty">正在读取应用使用记录…</div>' : renderAppList(data.apps)}
       </section>
       <p class="calc-note">
         应用排行根据按键事件时所在的前台应用估算；只记录进程名、时间与键码，不保存输入内容、窗口标题或屏幕截图。
         全屏程序、管理员权限窗口可能无法被普通权限进程捕获。
       </p>
+    </div>`);
+}
+
+/* ---------- scheduler ---------- */
+
+const WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+function scheduleSummary(script) {
+  const time = script.timeOfDay || '09:00';
+  if (script.scheduleKind === 'interval') {
+    const minutes = script.intervalMinutes || 0;
+    return minutes % 60 === 0 ? `每 ${minutes / 60} 小时` : `每 ${minutes} 分钟`;
+  }
+  if (script.scheduleKind === 'daily') return `每天 ${time}`;
+  if (script.scheduleKind === 'weekly') {
+    return `每${WEEKDAY_NAMES[(script.weekday || 1) - 1]} ${time}`;
+  }
+  return '仅手动';
+}
+
+function defaultSchedulerForm() {
+  return {
+    id: null,
+    name: '',
+    command: '',
+    scheduleKind: 'manual',
+    intervalMinutes: 60,
+    timeOfDay: '09:00',
+    weekday: 1,
+    enabled: true
+  };
+}
+
+function schedulerFormHtml(form) {
+  const kind = form.scheduleKind || 'manual';
+  return `
+    <div id="scheduler-form" class="scheduler-form">
+      <div class="form-grid">
+        <label>名称
+          <input data-scheduler-field="name" value="${escapeHtml(form.name || '')}" placeholder="可选">
+        </label>
+        <label>执行计划
+          <select data-scheduler-field="scheduleKind">
+            <option value="manual" ${kind === 'manual' ? 'selected' : ''}>仅手动</option>
+            <option value="interval" ${kind === 'interval' ? 'selected' : ''}>每隔一段时间</option>
+            <option value="daily" ${kind === 'daily' ? 'selected' : ''}>每天</option>
+            <option value="weekly" ${kind === 'weekly' ? 'selected' : ''}>每周</option>
+          </select>
+        </label>
+        <label class="wide">脚本命令
+          <textarea data-scheduler-field="command" rows="2" spellcheck="false"
+            placeholder="例如：python scripts\\daily.py 或 powershell -File .\\task.ps1">${escapeHtml(form.command || '')}</textarea>
+        </label>
+        <label class="schedule-field ${kind === 'interval' ? '' : 'hidden'}" data-kind="interval">间隔（分钟）
+          <input type="number" min="1" max="10080" step="1"
+            data-scheduler-field="intervalMinutes" value="${form.intervalMinutes || 60}">
+        </label>
+        <label class="schedule-field ${kind === 'daily' || kind === 'weekly' ? '' : 'hidden'}" data-kind="timed">执行时间
+          <input type="time" data-scheduler-field="timeOfDay" value="${form.timeOfDay || '09:00'}">
+        </label>
+        <label class="schedule-field ${kind === 'weekly' ? '' : 'hidden'}" data-kind="weekly">星期
+          <select data-scheduler-field="weekday">
+            ${WEEKDAY_NAMES.map((name, index) => `<option value="${index + 1}" ${Number(form.weekday || 1) === index + 1 ? 'selected' : ''}>${name}</option>`).join('')}
+          </select>
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" data-scheduler-field="enabled" ${form.enabled !== false ? 'checked' : ''}>
+          启用
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="soft-btn" data-scheduler-action="cancel-form" type="button">取消</button>
+        <button class="primary" data-scheduler-action="save-form" type="button">保存脚本</button>
+      </div>
     </div>`;
+}
+
+function scheduledRowHtml(script) {
+  const status = (script.lastStatus || '尚未运行').split('\n')[0];
+  const statusClass = status.startsWith('成功')
+    ? 'ok'
+    : status.startsWith('失败') || status.includes('中断')
+      ? 'fail'
+      : status.startsWith('运行中')
+        ? 'running'
+        : '';
+  const output = (script.lastOutput || '').trim();
+  return `
+    <div class="scheduled-row">
+      <div class="scheduled-head">
+        <div class="scheduled-title">${escapeHtml(script.name)}</div>
+        <label class="switch" title="启用或暂停脚本">
+          <input type="checkbox" data-scheduled-enabled="${escapeHtml(script.id)}" ${script.enabled ? 'checked' : ''}>
+          <span class="switch-track"></span>
+        </label>
+      </div>
+      <code class="scheduled-command">${escapeHtml(script.command)}</code>
+      <div class="scheduled-meta">
+        <span>${escapeHtml(scheduleSummary(script))}</span>
+        <span>上次：${script.lastRunMs ? escapeHtml(formatFull(script.lastRunMs / 1000)) : '尚未运行'}</span>
+        <span>下次：${script.enabled && script.nextRunMs ? escapeHtml(formatFull(script.nextRunMs / 1000)) : '未安排'}</span>
+        <span class="scheduled-status ${statusClass}">${escapeHtml(status)}</span>
+      </div>
+      ${output ? `<pre class="scheduled-output">${escapeHtml(output.slice(0, 400))}</pre>` : ''}
+      <div class="scheduled-actions">
+        <button class="soft-btn small" data-scheduler-action="run-script" data-id="${escapeHtml(script.id)}"
+          ${status.startsWith('运行中') ? 'disabled' : ''}>立即运行</button>
+        <button class="soft-btn small" data-scheduler-action="edit-script" data-id="${escapeHtml(script.id)}">编辑</button>
+        <button class="link-btn" data-scheduler-action="delete-script" data-id="${escapeHtml(script.id)}">删除</button>
+      </div>
+    </div>`;
+}
+
+function renderScheduler() {
+  const data = state.schedulerState;
+  if (!data) {
+    setDataPaneHtml(`
+      <div class="activity-view">
+        <header class="data-head">
+          <div class="head-copy"><h1>定时任务</h1><p>让 Toccata 按计划汇总站点或执行本地脚本。</p></div>
+        </header>
+        <div class="data-empty">正在读取定时任务…</div>
+      </div>`);
+    return;
+  }
+
+  const official = data.official;
+  const scripts = data.scripts || [];
+  const hours = Math.round((official.intervalMinutes / 60) * 10) / 10;
+  const officialStatus = (official.lastStatus || '尚未运行').split('\n')[0];
+  const officialRunning = state.schedulerOfficialRunning || officialStatus.startsWith('运行中');
+  const officialStatusClass = officialStatus.startsWith('成功')
+    ? 'ok'
+    : officialStatus.startsWith('失败') ? 'fail' : officialStatus.startsWith('运行中') ? 'running' : '';
+
+  setDataPaneHtml(`
+    <div class="activity-view">
+      <header class="data-head">
+        <div class="head-copy">
+          <h1>定时任务</h1>
+          <p>让 Toccata 按计划汇总站点或执行本地脚本。</p>
+        </div>
+      </header>
+
+      <section class="data-card">
+        <div class="card-head">
+          <div class="calendar-heading">
+            <h2>官方任务</h2>
+            <span class="section-meta">AI 汇总站点 · 默认每 3 小时</span>
+          </div>
+          <label class="switch" title="开启或关闭自动汇总">
+            <input id="scheduler-official-enabled" type="checkbox" ${official.enabled ? 'checked' : ''}>
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="scheduler-meta">
+          <span>上次：${official.lastRunMs ? escapeHtml(formatFull(official.lastRunMs / 1000)) : '尚未运行'}</span>
+          <span>下次：${official.enabled && official.nextRunMs ? escapeHtml(formatFull(official.nextRunMs / 1000)) : '已关闭'}</span>
+          <span class="scheduled-status ${officialStatusClass}">${escapeHtml(officialStatus)}</span>
+        </div>
+        <div class="official-controls">
+          <label>每
+            <input id="scheduler-official-hours" type="number" min="0.1" max="168" step="0.5" value="${hours}">
+            小时
+          </label>
+          <button class="soft-btn small" data-scheduler-action="save-official" type="button">保存</button>
+          <button class="soft-btn small primary-soft" data-scheduler-action="run-official" type="button" ${officialRunning ? 'disabled' : ''}>
+            ${officialRunning ? '汇总中…' : '立即汇总'}
+          </button>
+        </div>
+        <p class="hint">只把未识别的浏览器域名发给 DeepSeek，不发送完整 URL 或窗口标题。</p>
+      </section>
+
+      <section class="data-card">
+        <div class="card-head">
+          <div class="calendar-heading">
+            <h2>用户任务</h2>
+            <span class="section-meta">每个脚本占一行；可通过 cmd.exe 立即或按计划执行</span>
+          </div>
+          <button class="soft-btn small" data-scheduler-action="add-script" type="button">添加脚本</button>
+        </div>
+        ${state.schedulerEditing && state.schedulerForm ? schedulerFormHtml(state.schedulerForm) : ''}
+        ${scripts.length ? scripts.map(scheduledRowHtml).join('') : '<div class="data-empty">还没有用户脚本。点击「添加脚本」创建。</div>'}
+        <p class="scheduler-warning">
+          脚本以当前用户权限在项目根目录执行，最长运行 5 分钟。请只运行你信任的命令。
+        </p>
+      </section>
+    </div>`);
+}
+
+function updateScheduleFieldVisibility() {
+  const form = document.getElementById('scheduler-form');
+  if (!form) return;
+  const select = form.querySelector('[data-scheduler-field="scheduleKind"]');
+  const kind = select ? select.value : 'manual';
+  form.querySelectorAll('.schedule-field').forEach(field => {
+    const fieldKind = field.dataset.kind;
+    const visible = fieldKind === kind || (fieldKind === 'timed' && (kind === 'daily' || kind === 'weekly'));
+    field.classList.toggle('hidden', !visible);
+  });
+}
+
+function readSchedulerForm() {
+  const form = document.getElementById('scheduler-form');
+  if (!form) return null;
+  const value = name => form.querySelector(`[data-scheduler-field="${name}"]`);
+  const scheduleKind = value('scheduleKind')?.value || 'manual';
+  return {
+    id: state.schedulerForm?.id || null,
+    name: value('name')?.value.trim() || '',
+    command: value('command')?.value.trim() || '',
+    scheduleKind,
+    intervalMinutes: Number(value('intervalMinutes')?.value) || null,
+    timeOfDay: value('timeOfDay')?.value || '09:00',
+    weekday: Number(value('weekday')?.value) || 1,
+    enabled: Boolean(value('enabled')?.checked)
+  };
+}
+
+async function loadScheduler() {
+  if (!invoke || state.schedulerLoading) return;
+  state.schedulerLoading = true;
+  try {
+    state.schedulerState = await invoke('scheduler_state');
+  } catch (error) {
+    toast(`读取定时任务失败：${error}`);
+  } finally {
+    state.schedulerLoading = false;
+    if (state.view === 'scheduler' && !state.schedulerEditing) renderScheduler();
+  }
+}
+
+async function saveOfficialSettings(enabledOverride) {
+  const enabled = enabledOverride === undefined
+    ? document.getElementById('scheduler-official-enabled').checked
+    : enabledOverride;
+  const hours = Number(document.getElementById('scheduler-official-hours').value);
+  if (!Number.isFinite(hours) || hours <= 0) {
+    toast('请输入有效的小时间隔');
+    return;
+  }
+  const minutes = Math.max(1, Math.min(10080, Math.round(hours * 60)));
+  try {
+    await invoke('save_official_settings', { enabled, intervalMinutes: minutes });
+    toast('官方任务设置已保存');
+    await loadScheduler();
+  } catch (error) {
+    toast(`保存失败：${error}`);
+  }
+}
+
+async function runOfficialSummary() {
+  if (state.schedulerOfficialRunning) return;
+  state.schedulerOfficialRunning = true;
+  renderScheduler();
+  try {
+    await invoke('run_official_summary');
+    toast('AI 汇总完成');
+    await loadScheduler();
+  } catch (error) {
+    toast(`AI 汇总失败：${error}`);
+  } finally {
+    state.schedulerOfficialRunning = false;
+    if (state.view === 'scheduler') renderScheduler();
+  }
+}
+
+async function saveSchedulerScript() {
+  const form = readSchedulerForm();
+  if (!form) return;
+  if (!form.command) {
+    toast('脚本内容不能为空');
+    return;
+  }
+  if (form.scheduleKind === 'interval'
+    && (!form.intervalMinutes || form.intervalMinutes < 1 || form.intervalMinutes > 10080)) {
+    toast('间隔需在 1 到 10080 分钟之间');
+    return;
+  }
+  try {
+    await invoke('save_scheduled_script', {
+      id: form.id,
+      name: form.name,
+      command: form.command,
+      scheduleKind: form.scheduleKind,
+      intervalMinutes: form.scheduleKind === 'interval' ? form.intervalMinutes : null,
+      timeOfDay: form.scheduleKind === 'manual' ? null : form.timeOfDay,
+      weekday: form.scheduleKind === 'weekly' ? form.weekday : null,
+      enabled: form.enabled
+    });
+    state.schedulerEditing = false;
+    state.schedulerForm = null;
+    await loadScheduler();
+    toast('脚本已保存');
+  } catch (error) {
+    toast(`保存脚本失败：${error}`);
+  }
+}
+
+function editSchedulerScript(id) {
+  const script = state.schedulerState?.scripts.find(item => item.id === id);
+  if (!script) return;
+  state.schedulerEditing = true;
+  state.schedulerForm = {
+    id: script.id,
+    name: script.name,
+    command: script.command,
+    scheduleKind: script.scheduleKind,
+    intervalMinutes: script.intervalMinutes || 60,
+    timeOfDay: script.timeOfDay || '09:00',
+    weekday: script.weekday || 1,
+    enabled: script.enabled
+  };
+  renderScheduler();
+}
+
+function cancelSchedulerForm() {
+  state.schedulerEditing = false;
+  state.schedulerForm = null;
+  renderScheduler();
+}
+
+async function deleteSchedulerScript(id) {
+  const script = state.schedulerState?.scripts.find(item => item.id === id);
+  if (!script) return;
+  if (!await askConfirm(`删除脚本「${script.name}」？`, '删除脚本')) return;
+  try {
+    await invoke('delete_scheduled_script', { id });
+    await loadScheduler();
+    toast('脚本已删除');
+  } catch (error) {
+    toast(`删除失败：${error}`);
+  }
+}
+
+async function toggleSchedulerScript(id, enabled) {
+  try {
+    await invoke('set_scheduled_script_enabled', { id, enabled });
+    await loadScheduler();
+  } catch (error) {
+    toast(`操作失败：${error}`);
+  }
+}
+
+async function runSchedulerScript(id) {
+  try {
+    await invoke('run_scheduled_script', { id });
+    toast('脚本已开始运行');
+    setTimeout(loadScheduler, 800);
+  } catch (error) {
+    toast(`运行失败：${error}`);
+  }
+}
+
+async function handleSchedulerAction(action, id) {
+  if (action === 'save-official') await saveOfficialSettings();
+  else if (action === 'run-official') await runOfficialSummary();
+  else if (action === 'add-script') {
+    state.schedulerEditing = true;
+    state.schedulerForm = defaultSchedulerForm();
+    renderScheduler();
+  } else if (action === 'save-form') await saveSchedulerScript();
+  else if (action === 'cancel-form') cancelSchedulerForm();
+  else if (action === 'edit-script') editSchedulerScript(id);
+  else if (action === 'delete-script') await deleteSchedulerScript(id);
+  else if (action === 'run-script') await runSchedulerScript(id);
 }
 
 async function loadActivity() {
@@ -1437,20 +1928,52 @@ async function loadActivity() {
   }
 }
 
+async function runAiGrouping() {
+  if (state.aiGrouping) return;
+  state.aiGrouping = true;
+  if (state.view === 'ranking') renderRanking();
+  try {
+    const updated = await invoke('ai_group_sites');
+    toast(updated > 0 ? `AI 已汇总 ${updated} 个站点` : '没有需要汇总的新站点');
+    await loadRanking();
+  } catch (error) {
+    toast(`AI 汇总失败：${error}`);
+  } finally {
+    state.aiGrouping = false;
+    if (state.view === 'ranking') renderRanking();
+  }
+}
+
 async function loadRanking() {
   if (!invoke || state.rankingLoading) return;
   state.rankingLoading = true;
   if (state.view === 'ranking') renderRanking();
   try {
-    const heatStart = addDays(weekStartDate(new Date()), -25 * 7);
     const days = dayRangesForRange(state.rankingRange);
-    const [data, daily, capture] = await Promise.all([
+    const loadedDay = todayKey();
+    const needsDaily = !state.rankingDaily || state.rankingDailyLoadedDay !== loadedDay;
+    const jobs = [
       invoke('keyboard_snapshot', { days, nowMs: Date.now() }),
-      invoke('keyboard_daily', { startMs: heatStart.getTime(), endMs: Date.now() }),
       invoke('capture_status').catch(() => false)
-    ]);
+    ];
+    if (needsDaily) {
+      jobs.push(invoke('keyboard_daily', { days: heatmapDayRanges(), nowMs: Date.now() }).catch(() => null));
+    }
+    const [data, capture, daily] = await Promise.all(jobs);
+    if (daily) {
+      state.rankingDaily = daily;
+      state.rankingDailyLoadedDay = loadedDay;
+    }
+    const todayStart = startOfDay(new Date()).getTime();
+    const todayStat = data.days?.find(day => day.startMs === todayStart);
+    if (state.rankingDaily && todayStat) {
+      const entry = state.rankingDaily.find(day => day.startMs === todayStart);
+      if (entry) {
+        entry.activeMs = todayStat.activeMs;
+        entry.keyCount = todayStat.keyCount;
+      }
+    }
     state.rankingData = data;
-    state.rankingDaily = daily;
     state.captureEnabled = Boolean(capture);
   } catch (error) {
     if (state.view === 'ranking') toast(`读取应用趋势失败：${error}`);
@@ -1467,7 +1990,7 @@ function renderAll() {
   renderSidebar();
 
   const isTaskView = TASK_VIEWS.includes(state.view);
-  const isDataView = ['activity', 'ranking'].includes(state.view);
+  const isDataView = ['activity', 'ranking', 'scheduler'].includes(state.view);
   tasksArea.classList.toggle('hidden', !isTaskView);
   calendarPane.classList.toggle('hidden', state.view !== 'calendar');
   dataPane.classList.toggle('hidden', !isDataView);
@@ -1482,6 +2005,8 @@ function renderAll() {
     renderActivity();
   } else if (state.view === 'ranking') {
     renderRanking();
+  } else if (state.view === 'scheduler') {
+    renderScheduler();
   }
 }
 
@@ -1505,10 +2030,15 @@ function setView(view) {
   state.selectedId = null;
   state.query = '';
   state.collapsed.clear();
-  state.showCompleted = true;
+  state.schedulerEditing = false;
+  state.schedulerForm = null;
   if (view === 'calendar') {
     state.calendarMonth = startOfMonth(new Date());
     state.calendarDay = startOfDay(new Date());
+  }
+  if (view === 'activity' || view === 'ranking' || view === 'scheduler') {
+    dataPane.scrollTop = 0;
+    dataPane.scrollLeft = 0;
   }
   renderAll();
   if (view === 'activity') {
@@ -1518,6 +2048,8 @@ function setView(view) {
     state.rankingData = null;
     state.rankingDaily = null;
     loadRanking();
+  } else if (view === 'scheduler') {
+    loadScheduler();
   }
 }
 
@@ -1683,6 +2215,7 @@ function switchSettingsTab(tab) {
   });
   document.getElementById('settings-reminder').classList.toggle('hidden', tab !== 'reminder');
   document.getElementById('settings-window').classList.toggle('hidden', tab !== 'window');
+  document.getElementById('settings-general').classList.toggle('hidden', tab !== 'general');
 }
 
 function openSettings(tab = 'reminder') {
@@ -1692,15 +2225,28 @@ function openSettings(tab = 'reminder') {
   document.getElementById('setting-time').value = settings.dateOnlyTime;
   document.getElementById('setting-fullscreen').checked = settings.silentFullscreen;
 
-  const mode = ['minimize', 'exit', 'ask'].includes(state.closeMode) ? state.closeMode : 'ask';
+  const mode = ['tray', 'exit', 'ask'].includes(state.closeMode) ? state.closeMode : 'ask';
   const radio = document.querySelector(`input[name="close-mode"][value="${mode}"]`);
   if (radio) radio.checked = true;
+
+  const autostart = document.getElementById('setting-autostart');
+  autostart.checked = Boolean(state.autostartEnabled);
+  autostart.disabled = state.autostartEnabled === null;
+  if (state.autostartEnabled === null && invoke) {
+    invoke('autostart_status').then(enabled => {
+      state.autostartEnabled = Boolean(enabled);
+      autostart.checked = Boolean(enabled);
+      autostart.disabled = false;
+    }).catch(() => {
+      autostart.disabled = false;
+    });
+  }
 
   switchSettingsTab(tab);
   document.getElementById('settings-modal').classList.remove('hidden');
 }
 
-function closeSettings() {
+async function closeSettings() {
   const lead = Number(document.getElementById('setting-lead').value);
   const time = document.getElementById('setting-time').value;
   state.reminderSettings = {
@@ -1712,9 +2258,22 @@ function closeSettings() {
   writeSetting('toccata.reminderSettings', JSON.stringify(state.reminderSettings));
 
   const mode = document.querySelector('input[name="close-mode"]:checked')?.value;
-  if (['minimize', 'exit', 'ask'].includes(mode)) {
+  if (['tray', 'exit', 'ask'].includes(mode)) {
     state.closeMode = mode;
     writeSetting('toccata.closeBehavior', mode);
+  }
+
+  const desiredAutostart = document.getElementById('setting-autostart').checked;
+  if (desiredAutostart !== state.autostartEnabled && invoke) {
+    try {
+      await invoke('set_autostart', { enabled: desiredAutostart });
+      state.autostartEnabled = desiredAutostart;
+      writeSetting('toccata.autostartInitialized', '1');
+    } catch (error) {
+      toast(`开机自启动设置失败：${error}`);
+      const autostart = document.getElementById('setting-autostart');
+      autostart.checked = Boolean(state.autostartEnabled);
+    }
   }
 
   document.getElementById('settings-modal').classList.add('hidden');
@@ -1722,10 +2281,26 @@ function closeSettings() {
   toast('设置已保存');
 }
 
+async function initializeAutostart() {
+  if (!invoke) return;
+  try {
+    if (!readSetting('toccata.autostartInitialized', '')) {
+      await invoke('set_autostart', { enabled: true });
+      state.autostartEnabled = true;
+      writeSetting('toccata.autostartInitialized', '1');
+      return;
+    }
+    state.autostartEnabled = await invoke('autostart_status');
+  } catch (error) {
+    state.autostartEnabled = false;
+    toast(`开机自启动初始化失败：${error}`);
+  }
+}
+
 function handleCloseRequest() {
   if (state.closePromptOpen) return;
-  if (state.closeMode === 'minimize') {
-    invoke('minimize_main_window').catch(error => toast(`最小化失败：${error}`));
+  if (state.closeMode === 'tray') {
+    invoke('hide_main_window').catch(error => toast(`收起失败：${error}`));
     return;
   }
   if (state.closeMode === 'exit') {
@@ -1734,14 +2309,14 @@ function handleCloseRequest() {
   }
 
   state.closePromptOpen = true;
-  const minimize = document.querySelector('input[name="close-choice"][value="minimize"]');
-  if (minimize) minimize.checked = true;
+  const tray = document.querySelector('input[name="close-choice"][value="tray"]');
+  if (tray) tray.checked = true;
   document.getElementById('close-remember').checked = true;
   document.getElementById('close-modal').classList.remove('hidden');
 }
 
 function confirmCloseChoice() {
-  const selected = document.querySelector('input[name="close-choice"]:checked')?.value || 'minimize';
+  const selected = document.querySelector('input[name="close-choice"]:checked')?.value || 'tray';
   const remember = document.getElementById('close-remember').checked;
   if (remember) {
     state.closeMode = selected;
@@ -1751,7 +2326,7 @@ function confirmCloseChoice() {
   state.closePromptOpen = false;
 
   if (selected === 'exit') invoke('quit_app');
-  else invoke('minimize_main_window').catch(error => toast(`最小化失败：${error}`));
+  else invoke('hide_main_window').catch(error => toast(`收起失败：${error}`));
 }
 
 function cancelCloseChoice() {
@@ -1881,7 +2456,11 @@ async function createTask(title, options = {}) {
 async function createSubtask(title) {
   const text = title.trim();
   const parent = selectedTask();
-  if (!text || !parent || parent.parentId) return;
+  if (!text || !parent) return;
+  if (taskDepth(parent) >= 5) {
+    toast('子任务最多支持 5 层');
+    return;
+  }
   try {
     await flushSave();
     await invoke('create_task', {
@@ -1926,8 +2505,9 @@ async function togglePin(id) {
 
 let confirmResolver = null;
 
-function askConfirm(message) {
+function askConfirm(message, confirmLabel = '删除任务') {
   document.getElementById('confirm-text').textContent = message;
+  document.getElementById('confirm-ok').textContent = confirmLabel;
   document.getElementById('confirm').classList.remove('hidden');
   return new Promise(resolve => {
     confirmResolver = resolve;
@@ -2181,12 +2761,6 @@ function bindEvents() {
   });
 
   listEl.addEventListener('click', event => {
-    const section = event.target.closest('[data-section="completed"]');
-    if (section) {
-      state.showCompleted = !state.showCompleted;
-      renderList();
-      return;
-    }
     const wrap = event.target.closest('.row-wrap');
     if (!wrap) return;
     const id = wrap.dataset.id;
@@ -2355,6 +2929,11 @@ function bindEvents() {
   });
 
   dataPane.addEventListener('click', event => {
+    const schedulerAction = event.target.closest('[data-scheduler-action]');
+    if (schedulerAction) {
+      handleSchedulerAction(schedulerAction.dataset.schedulerAction, schedulerAction.dataset.id);
+      return;
+    }
     const activity = event.target.closest('[data-activity-range]');
     if (activity) {
       state.activityRange = activity.dataset.activityRange;
@@ -2367,6 +2946,34 @@ function bindEvents() {
       state.rankingRange = ranking.dataset.rankingRange;
       state.rankingData = null;
       loadRanking();
+      return;
+    }
+    const metric = event.target.closest('[data-calendar-metric]');
+    if (metric) {
+      state.calendarMetric = metric.dataset.calendarMetric;
+      writeSetting('toccata.calendarMetric', state.calendarMetric);
+      renderRanking();
+      return;
+    }
+    if (event.target.closest('[data-ai-group]')) {
+      runAiGrouping();
+    }
+  });
+
+  dataPane.addEventListener('change', event => {
+    if (event.target.id === 'scheduler-official-enabled') {
+      saveOfficialSettings(event.target.checked);
+      return;
+    }
+    const scriptEnabled = event.target.closest('[data-scheduled-enabled]');
+    if (scriptEnabled) {
+      toggleSchedulerScript(scriptEnabled.dataset.scheduledEnabled, scriptEnabled.checked);
+      return;
+    }
+    const scheduleKind = event.target.closest('[data-scheduler-field="scheduleKind"]');
+    if (scheduleKind) {
+      if (state.schedulerForm) state.schedulerForm.scheduleKind = scheduleKind.value;
+      updateScheduleFieldVisibility();
     }
   });
 
@@ -2460,8 +3067,10 @@ async function boot() {
 
   if (!['manual', 'created-desc', 'created-asc', 'title', 'planned'].includes(state.sort)) state.sort = 'manual';
   if (!['titles', 'details'].includes(state.display)) state.display = 'titles';
+  if (!['keys', 'time'].includes(state.calendarMetric)) state.calendarMetric = 'keys';
 
   await refresh();
+  initializeAutostart();
   setInterval(checkReminders, 20000);
   setInterval(() => {
     if (document.hidden) return;
@@ -2471,6 +3080,13 @@ async function boot() {
     if (document.hidden) return;
     if (state.view === 'activity') loadActivity();
     else if (state.view === 'ranking') loadRanking();
+    else if (state.view === 'scheduler' && !state.schedulerEditing) {
+      const active = document.activeElement;
+      const editingField = active
+        && dataPane.contains(active)
+        && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+      if (!editingField) loadScheduler();
+    }
   }, 5000);
 }
 

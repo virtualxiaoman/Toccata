@@ -188,6 +188,9 @@ pub fn create(
         if !exists {
             bail!("父任务不存在");
         }
+        if depth_of(&tx, parent)? >= 5 {
+            bail!("子任务最多支持 5 层");
+        }
         restore_ancestors(&tx, parent, now)?;
     }
 
@@ -374,6 +377,23 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn depth_of(conn: &Connection, id: &str) -> Result<i64> {
+    let depth: Option<i64> = conn
+        .query_row(
+            "WITH RECURSIVE anc(id, parent_id, depth) AS (
+               SELECT id, parent_id, 0 FROM tasks WHERE id = ?1
+               UNION ALL
+               SELECT t.id, t.parent_id, anc.depth + 1
+               FROM tasks t JOIN anc ON t.id = anc.parent_id
+             )
+             SELECT MAX(depth) FROM anc",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    depth.context("父任务不存在")
+}
+
 fn restore_ancestors(conn: &Connection, id: &str, now: f64) -> Result<()> {
     conn.execute(
         "WITH RECURSIVE anc(id, parent_id) AS (
@@ -526,6 +546,18 @@ mod tests {
 
         assert!(get(&conn, &root.id).is_pinned);
         assert!(!get(&conn, &child.id).is_pinned);
+    }
+
+    #[test]
+    fn subtasks_stop_at_five_levels() {
+        let mut conn = open_in_memory().unwrap();
+        let root = create_task(&mut conn, "root", None);
+        let mut parent = root.id.clone();
+        for level in 1..=5 {
+            let child = create_task(&mut conn, &format!("child {level}"), Some(&parent));
+            parent = child.id;
+        }
+        assert!(create(&mut conn, Some(&parent), "too deep", "", None, false, false, None).is_err());
     }
 
     #[test]

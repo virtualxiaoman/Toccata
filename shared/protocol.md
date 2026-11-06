@@ -86,9 +86,53 @@ CREATE TABLE IF NOT EXISTS key_events (
   keycode   INTEGER NOT NULL, -- macOS CGKeyCode
   kind      INTEGER NOT NULL, -- 0 = down, 1 = up
   hold_ms   INTEGER,          -- 配对成功的 up 行保存按住毫秒数
-  app       TEXT             -- 前台应用 bundle ID，可为 NULL
+  app       TEXT,             -- 前台应用 bundle ID，可为 NULL
+  title     TEXT,             -- Windows：前台窗口标题，可为 NULL
+  url       TEXT              -- Windows：浏览器地址栏完整 URL，可为 NULL
 );
 CREATE INDEX IF NOT EXISTS idx_key_events_ts ON key_events(ts_ms);
+
+CREATE TABLE IF NOT EXISTS mouse_events (
+  ts_ms  INTEGER NOT NULL, -- Unix epoch 毫秒
+  button INTEGER NOT NULL, -- 0 = 左键，1 = 右键
+  app    TEXT,             -- 前台应用标识，可为 NULL
+  title  TEXT,             -- Windows：前台窗口标题，可为 NULL
+  url    TEXT              -- Windows：浏览器地址栏完整 URL，可为 NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mouse_events_ts ON mouse_events(ts_ms);
+-- Windows 客户端通过 WH_MOUSE_LL 记录左/右键按下；只保存时间、按键与前台进程，
+-- 不保存鼠标坐标、滚轮或点击位置。
+-- Windows 浏览器窗口通过 UI Automation 读取地址栏完整 URL 并保存在本机；
+-- 展示统计时按站点归类并作为浏览器的子项，不把完整 URL 或窗口标题发送到界面。
+
+CREATE TABLE IF NOT EXISTS site_aliases (
+  domain     TEXT PRIMARY KEY NOT NULL, -- 浏览器域名
+  label      TEXT NOT NULL,             -- 展示用站点名称
+  updated_ms INTEGER NOT NULL
+);
+-- Windows 可选：用户点击「AI 汇总站点」后，将未识别域名交给 AI 归类并写入此表；
+-- 只发送域名，不发送完整 URL 或窗口标题。
+
+CREATE TABLE IF NOT EXISTS scheduler_config (
+  key   TEXT PRIMARY KEY NOT NULL, -- 官方任务配置键
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scheduled_scripts (
+  id               TEXT PRIMARY KEY NOT NULL,
+  name             TEXT NOT NULL,
+  command          TEXT NOT NULL,       -- 由本机 cmd.exe 执行的脚本命令
+  schedule_kind    TEXT NOT NULL,       -- manual / interval / daily / weekly
+  interval_minutes INTEGER,
+  time_of_day      TEXT,                -- HH:MM
+  weekday          INTEGER,             -- 1-7，周一到周日
+  enabled          INTEGER NOT NULL DEFAULT 1,
+  last_run_ms      INTEGER,
+  next_run_ms      INTEGER,
+  last_status      TEXT,
+  last_output      TEXT,
+  created_ms       INTEGER NOT NULL,
+  updated_ms       INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS app_sessions (
   app        TEXT NOT NULL,
@@ -179,7 +223,7 @@ CREATE TABLE IF NOT EXISTS task_progress (
 CREATE INDEX IF NOT EXISTS progress_task ON task_progress(task_id, created_at);
 ```
 
-任务库中全部 `*_at` 字段使用 **Unix epoch 秒（REAL）**，与键盘库的整数毫秒不同。`id` 为 UUID 字符串；`parent_id = NULL` 表示顶层任务。当前界面支持一级子任务，存储层保留递归父子关系。
+任务库中全部 `*_at` 字段使用 **Unix epoch 秒（REAL）**，与键盘库的整数毫秒不同。`id` 为 UUID 字符串；`parent_id = NULL` 表示顶层任务。macOS 界面当前支持一级子任务，Windows 界面最多支持 5 层；存储层保留递归父子关系。
 
 Windows 客户端使用以下扩展字段；macOS 端可忽略：`planned_has_time` 表示 `planned_at` 是否包含具体时间，`reminder_enabled` 控制任务提醒，`reminder_lead_minutes` 为提前分钟（`NULL` 表示使用界面默认值），`notified_at` 记录最近一次已发送提醒的时间，防止重复提醒。修改计划时间或提醒设置时应清空 `notified_at`。
 

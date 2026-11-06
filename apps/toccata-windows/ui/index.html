@@ -125,6 +125,9 @@
           <button class="nav-item" data-view="ranking">
             <svg class="icon"><use href="#i-chart"></use></svg><span>应用与趋势</span>
           </button>
+          <button class="nav-item" data-view="scheduler">
+            <svg class="icon"><use href="#i-clock"></use></svg><span>定时任务</span>
+          </button>
         </div>
       </nav>
 
@@ -384,6 +387,7 @@
           <h2>设置</h2>
           <button class="settings-tab active" data-settings-tab="reminder">提醒</button>
           <button class="settings-tab" data-settings-tab="window">窗口</button>
+          <button class="settings-tab" data-settings-tab="general">通用</button>
         </aside>
         <section class="settings-body">
           <div id="settings-reminder" class="settings-pane">
@@ -413,8 +417,8 @@
             <h3>窗口</h3>
             <p class="settings-caption">点击关闭按钮后：</p>
             <label class="choice-row">
-              <input type="radio" name="close-mode" value="minimize">
-              <span><strong>最小化到任务栏</strong><small>继续记录键盘活动和提醒</small></span>
+              <input type="radio" name="close-mode" value="tray">
+              <span><strong>收起到系统托盘</strong><small>继续记录键盘活动和提醒，任务栏不保留窗口</small></span>
             </label>
             <label class="choice-row">
               <input type="radio" name="close-mode" value="exit">
@@ -425,7 +429,21 @@
               <span><strong>每次询问</strong><small>关闭时选择最小化或退出</small></span>
             </label>
             <p class="settings-note">
-              首次关闭会询问一次；勾选「不再询问」后会记住选择，也可以在这里修改。
+              收起后可从系统托盘重新打开：左键点击图标，或右键选择「打开 Toccata」。首次关闭会询问一次；勾选「不再询问」后会记住选择，也可以在这里修改。
+            </p>
+          </div>
+
+          <div id="settings-general" class="settings-pane hidden">
+            <h3>通用</h3>
+            <div class="setting-row">
+              <span><strong>开机自启动</strong><small>登录 Windows 后自动启动 Toccata（默认开启）</small></span>
+              <label class="switch">
+                <input id="setting-autostart" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+            <p class="settings-note">
+              自启动注册会指向当前 Toccata 可执行文件；移动项目目录后需要重新开启一次。关闭后下次登录不会自动启动。
             </p>
           </div>
 
@@ -440,10 +458,10 @@
   <div id="close-modal" class="modal hidden">
     <div class="modal-card close-card">
       <h2>关闭窗口</h2>
-      <p class="settings-caption">要最小化到任务栏，还是退出 Toccata？</p>
+      <p class="settings-caption">要收起到系统托盘，还是退出 Toccata？</p>
       <label class="choice-row">
-        <input type="radio" name="close-choice" value="minimize" checked>
-        <span><strong>最小化到任务栏</strong><small>继续记录键盘活动和提醒</small></span>
+        <input type="radio" name="close-choice" value="tray" checked>
+        <span><strong>收起到系统托盘</strong><small>继续记录键盘活动和提醒，任务栏不保留窗口</small></span>
       </label>
       <label class="choice-row">
         <input type="radio" name="close-choice" value="exit">
