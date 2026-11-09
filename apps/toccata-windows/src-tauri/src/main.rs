@@ -213,6 +213,19 @@ fn is_fullscreen_active() -> bool {
 }
 
 #[tauri::command]
+fn is_session_locked() -> bool {
+    // QUNS_NOT_PRESENT = 1: locked console or screen saver
+    unsafe {
+        let mut state: i32 = 0;
+        if SHQueryUserNotificationState(&mut state) == 0 {
+            state == 1
+        } else {
+            false
+        }
+    }
+}
+
+#[tauri::command]
 fn set_task_completed(
     state: tauri::State<'_, Db>,
     id: String,
@@ -268,6 +281,7 @@ fn main() {
             mark_reminder_notified,
             show_notification,
             is_fullscreen_active,
+            is_session_locked,
             keyboard_snapshot,
             keyboard_daily,
             capture_status,

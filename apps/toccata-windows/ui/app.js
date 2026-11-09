@@ -162,10 +162,12 @@ const state = {
   reminderShowing: false,
   reminderTaskId: null,
   firedReminders: new Set(),
+  sessionLocked: false,
   calendarMonth: startOfMonth(new Date()),
   calendarDay: startOfDay(new Date()),
   activityRange: 'today',
   rankingRange: 'today',
+  collapsedApps: readCollapsedApps(),
   activityData: null,
   rankingData: null,
   rankingDaily: null,
@@ -205,6 +207,11 @@ function readSetting(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function readCollapsedApps() {
+  const raw = readSetting('toccata.collapsedApps', '');
+  return new Set(raw.split(',').filter(Boolean));
 }
 
 function readCloseMode() {
@@ -1190,6 +1197,13 @@ function formatDurationMs(ms) {
   return `${minutes} 分 ${seconds} 秒`;
 }
 
+function formatShare(part, total) {
+  if (!total || !part || part <= 0) return '0%';
+  const percent = (part / total) * 100;
+  if (percent < 0.1) return '<0.1%';
+  return `${Math.min(percent, 100).toFixed(1)}%`;
+}
+
 function rangeButtons(kind, current) {
   return ['today', 'yesterday', 'last7', 'week'].map(range => {
     const label = activityRangeLabel(range);
@@ -1375,6 +1389,14 @@ function appColor(app) {
   return `hsl(${hash}, 62%, 92%)`;
 }
 
+function appKeysWithChildren(apps) {
+  const keys = new Set();
+  for (const app of apps || []) {
+    if (app.parent) keys.add(app.parent);
+  }
+  return [...keys];
+}
+
 function renderAppList(apps) {
   if (!apps || !apps.length) {
     return '<div class="data-empty">这段时间还没有应用使用记录。</div>';
@@ -1393,32 +1415,41 @@ function renderAppList(apps) {
     children.sort((a, b) => (b.activeMs - a.activeMs) || (b.keyCount - a.keyCount));
   }
 
+  const totalActive = topLevel.reduce((sum, app) => sum + (app.activeMs || 0), 0);
   const max = Math.max(1, ...topLevel.map(app => app.activeMs || 1));
   return `<div class="app-list">${topLevel.map(app => {
     const name = app.label || appDisplayName(app.app);
     const initial = name.slice(0, 1).toUpperCase();
     const ratio = Math.max(2, Math.min(100, (app.activeMs / max) * 100));
+    const share = formatShare(app.activeMs, totalActive);
     const children = childrenByParent.get(app.app) || [];
+    const collapsed = state.collapsedApps.has(app.app);
     return `
       <div class="app-group">
-        <div class="app-row">
+        <div class="app-row ${children.length ? 'toggleable' : ''}" ${children.length ? `data-app-toggle="${escapeHtml(app.app)}" title="${collapsed ? '展开窗口明细' : '收起窗口明细'}"` : ''}>
+          ${children.length
+            ? `<span class="app-toggle" aria-hidden="true"><svg class="icon"><use href="${collapsed ? '#i-chevron-right' : '#i-chevron-down'}"></use></svg></span>`
+            : '<span class="app-toggle-spacer" aria-hidden="true"></span>'}
           <div class="app-icon" style="background:${appColor(app.app)}">${escapeHtml(initial)}</div>
           <div class="app-main">
             <div class="app-line">
               <span class="app-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
               <span class="app-duration">${formatDurationMs(app.activeMs)}</span>
+              <span class="app-share" title="占全部应用使用时长 ${share}">${share}</span>
               <span class="app-keys">${app.keyCount.toLocaleString('zh-CN')} 次按键</span>
             </div>
             <div class="app-bar"><i style="width:${ratio.toFixed(1)}%"></i></div>
           </div>
         </div>
-        ${children.length ? `<div class="app-children">${children.map(child => {
+        ${children.length && !collapsed ? `<div class="app-children">${children.map(child => {
           const childName = child.label || appDisplayName(child.app);
+          const childShare = formatShare(child.activeMs, app.activeMs);
           return `
             <div class="site-row">
               <span class="site-mark" style="background:${appColor(child.app)}"></span>
               <span class="site-name">${escapeHtml(childName)}</span>
               <span class="site-duration">${formatDurationMs(child.activeMs)}</span>
+              <span class="site-share" title="占 ${escapeHtml(name)} 使用时长 ${childShare}">${childShare}</span>
               <span class="site-keys">${child.keyCount.toLocaleString('zh-CN')} 次</span>
             </div>`;
         }).join('')}</div>` : ''}
@@ -1496,6 +1527,9 @@ function renderActivityHeatmap(daily, metric) {
 
 function renderRanking() {
   const data = state.rankingData || { apps: [], activeMs: 0, keyCount: 0 };
+  const expandableApps = appKeysWithChildren(data.apps);
+  const allCollapsed = expandableApps.length > 0
+    && expandableApps.every(app => state.collapsedApps.has(app));
   const days = dayRangesForRange(state.rankingRange);
   setDataPaneHtml(`
     <div class="activity-view">
@@ -1523,11 +1557,16 @@ function renderRanking() {
         <div class="card-head">
           <div class="calendar-heading">
             <h2>应用与网页活跃度</h2>
-            <span class="section-meta">按键盘活动估算使用时间，浏览器站点显示为子项</span>
+            <span class="section-meta">按键盘活动估算使用时间，点击应用可展开或收起窗口明细</span>
           </div>
-          <button class="soft-btn small" data-ai-group ${state.aiGrouping ? 'disabled' : ''}>
-            ${state.aiGrouping ? '汇总中…' : 'AI 汇总站点'}
-          </button>
+          <div class="card-actions">
+            ${expandableApps.length
+              ? `<button class="soft-btn small" data-app-toggle-all>${allCollapsed ? '全部展开' : '全部收起'}</button>`
+              : ''}
+            <button class="soft-btn small" data-ai-group ${state.aiGrouping ? 'disabled' : ''}>
+              ${state.aiGrouping ? '汇总中…' : 'AI 汇总站点'}
+            </button>
+          </div>
         </div>
         <div class="range-row compact">
           <div class="segmented">${rangeButtons('ranking', state.rankingRange)}</div>
@@ -1537,7 +1576,7 @@ function renderRanking() {
         ${state.rankingLoading && !state.rankingData ? '<div class="data-empty">正在读取应用使用记录…</div>' : renderAppList(data.apps)}
       </section>
       <p class="calc-note">
-        应用排行根据按键事件时所在的前台应用估算；只记录进程名、时间与键码，不保存输入内容、窗口标题或屏幕截图。
+        应用排行根据按键事件时所在的前台应用估算；窗口标题只用于本地归类，QQ、微信、企业微信等社交软件不记录窗口标题；不保存输入内容、鼠标坐标或屏幕截图。
         全屏程序、管理员权限窗口可能无法被普通权限进程捕获。
       </p>
     </div>`);
@@ -2361,7 +2400,21 @@ function showNextReminder() {
   }
 }
 
+function acknowledgeReminder(taskId) {
+  if (!taskId || !invoke) return;
+  const now = nowSeconds();
+  invoke('mark_reminder_notified', { id: taskId, at: now })
+    .then(() => {
+      const task = state.byId.get(taskId);
+      if (task) task.notifiedAt = now;
+    })
+    .catch(() => {
+      /* Keep it unacknowledged so it can appear again next time. */
+    });
+}
+
 function dismissReminder() {
+  acknowledgeReminder(state.reminderTaskId);
   document.getElementById('reminder-modal').classList.add('hidden');
   state.reminderShowing = false;
   state.reminderTaskId = null;
@@ -2370,6 +2423,7 @@ function dismissReminder() {
 
 function openReminderTask() {
   const id = state.reminderTaskId;
+  acknowledgeReminder(id);
   document.getElementById('reminder-modal').classList.add('hidden');
   state.reminderShowing = false;
   state.reminderTaskId = null;
@@ -2385,15 +2439,35 @@ function openReminderTask() {
   showNextReminder();
 }
 
+const REMINDER_CATCHUP_SECONDS = 7 * 24 * 60 * 60;
+
 async function checkReminders() {
   if (!invoke || !state.tasks.length) return;
+
+  let locked = false;
+  try {
+    locked = await invoke('is_session_locked');
+  } catch {
+    /* Older builds without lock detection keep the previous behavior. */
+  }
+  const justUnlocked = state.sessionLocked && !locked;
+  state.sessionLocked = locked;
+  if (locked) return;
+
+  if (justUnlocked && state.reminderShowing) {
+    const current = state.reminderTaskId ? state.byId.get(state.reminderTaskId) : null;
+    if (current) {
+      invoke('show_notification', { title: 'Toccata 提醒', body: current.title }).catch(() => {});
+    }
+  }
+
   const now = nowSeconds();
   for (const task of state.tasks) {
     if (!task.reminderEnabled || task.plannedAt == null || task.completedAt || task.notifiedAt != null) {
       continue;
     }
     const due = reminderTimeFor(task);
-    if (due == null || due > now || now - due > 86400) continue;
+    if (due == null || due > now || now - due > REMINDER_CATCHUP_SECONDS) continue;
     if (state.firedReminders.has(task.id)) continue;
     state.firedReminders.add(task.id);
 
@@ -2410,13 +2484,6 @@ async function checkReminders() {
     }
 
     enqueueReminder(task);
-    try {
-      await invoke('mark_reminder_notified', { id: task.id, at: now });
-      task.notifiedAt = now;
-    } catch {
-      /* Retry on the next poll if the write failed. */
-      state.firedReminders.delete(task.id);
-    }
   }
 }
 
@@ -2948,6 +3015,34 @@ function bindEvents() {
       loadRanking();
       return;
     }
+    const toggleAll = event.target.closest('[data-app-toggle-all]');
+    if (toggleAll) {
+      const apps = state.rankingData?.apps || [];
+      const keys = appKeysWithChildren(apps);
+      const collapsedAll = keys.length > 0 && keys.every(app => state.collapsedApps.has(app));
+      for (const app of keys) {
+        if (collapsedAll) {
+          state.collapsedApps.delete(app);
+        } else {
+          state.collapsedApps.add(app);
+        }
+      }
+      writeSetting('toccata.collapsedApps', [...state.collapsedApps].join(','));
+      renderRanking();
+      return;
+    }
+    const appToggle = event.target.closest('[data-app-toggle]');
+    if (appToggle) {
+      const app = appToggle.dataset.appToggle;
+      if (state.collapsedApps.has(app)) {
+        state.collapsedApps.delete(app);
+      } else {
+        state.collapsedApps.add(app);
+      }
+      writeSetting('toccata.collapsedApps', [...state.collapsedApps].join(','));
+      renderRanking();
+      return;
+    }
     const metric = event.target.closest('[data-calendar-metric]');
     if (metric) {
       state.calendarMetric = metric.dataset.calendarMetric;
@@ -3071,6 +3166,11 @@ async function boot() {
 
   await refresh();
   initializeAutostart();
+  checkReminders();
+  window.addEventListener('focus', () => checkReminders());
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkReminders();
+  });
   setInterval(checkReminders, 20000);
   setInterval(() => {
     if (document.hidden) return;

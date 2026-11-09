@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::c_void;
@@ -64,6 +64,73 @@ const BROWSER_EXES: &[&str] = &[
     "opera.exe",
     "firefox.exe",
 ];
+
+const UNKNOWN_PAGE_KEY: &str = "web:__unknown_page__";
+const UNKNOWN_PAGE_LABEL: &str = "未识别页面";
+const INTERNAL_PAGE_KEY: &str = "web:__internal_page__";
+const INTERNAL_PAGE_LABEL: &str = "浏览器内部页";
+const UNKNOWN_WINDOW_KEY: &str = "win:__unknown_window__";
+const UNKNOWN_WINDOW_LABEL: &str = "未识别窗口";
+
+const PRIVATE_APPS: &[&str] = &[
+    "qq.exe",
+    "qqnt.exe",
+    "wechat.exe",
+    "weixin.exe",
+    "wechatappex.exe",
+    "wxwork.exe",
+    "wxworkhelper.exe",
+    "dingtalk.exe",
+    "dingtalkhelper.exe",
+    "feishu.exe",
+    "lark.exe",
+    "telegram.exe",
+    "discord.exe",
+    "slack.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "whatsapp.exe",
+    "line.exe",
+    "kook.exe",
+    "yy.exe",
+];
+
+const WINDOW_TITLE_SUFFIXES: &[&str] = &[
+    "visual studio code",
+    "visual studio code - insiders",
+    "microsoft visual studio",
+    "pycharm",
+    "intellij idea",
+    "webstorm",
+    "clion",
+    "goland",
+    "rider",
+    "phpstorm",
+    "datagrip",
+    "rubymine",
+    "android studio",
+    "cursor",
+    "trae",
+    "windsurf",
+    "qoder",
+    "sublime text",
+    "notepad++",
+    "typora",
+    "obsidian",
+    "word",
+    "excel",
+    "powerpoint",
+    "wps",
+    "qt creator",
+    "eclipse",
+    "zed",
+    "neovim",
+    "vim",
+];
+
+fn is_private_app(app: &str) -> bool {
+    PRIVATE_APPS.contains(&app)
+}
 
 type HHOOK = *mut c_void;
 type HWND = *mut c_void;
@@ -222,8 +289,12 @@ fn init_db(path: &Path) -> Result<()> {
            end_ms    INTEGER NOT NULL,
            key_count INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_app_sessions_start ON app_sessions(start_ms);",
+         CREATE INDEX IF NOT EXISTS idx_app_sessions_start ON app_sessions(start_ms);
+         CREATE TABLE IF NOT EXISTS privacy_cleanup (
+           id TEXT PRIMARY KEY NOT NULL
+         );",
     )?;
+    scrub_private_titles(&conn)?;
     for (table, column) in [
         ("key_events", "title"),
         ("key_events", "url"),
@@ -232,6 +303,33 @@ fn init_db(path: &Path) -> Result<()> {
     ] {
         ensure_column(&conn, table, column)?;
     }
+    Ok(())
+}
+
+fn scrub_private_titles(conn: &Connection) -> Result<()> {
+    let done: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM privacy_cleanup WHERE id = 'social-window-titles-v1'",
+        [],
+        |row| row.get(0),
+    )?;
+    if done > 0 {
+        return Ok(());
+    }
+    let placeholders = PRIVATE_APPS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    for table in ["key_events", "mouse_events"] {
+        conn.execute(
+            &format!("UPDATE {table} SET title = NULL, url = NULL WHERE app IN ({placeholders})"),
+            params_from_iter(PRIVATE_APPS.iter()),
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO privacy_cleanup (id) VALUES ('social-window-titles-v1')",
+        [],
+    )?;
     Ok(())
 }
 
@@ -566,11 +664,20 @@ fn context_sampler() {
         let (app, title, url) = unsafe {
             let window = GetForegroundWindow();
             let app = query_foreground_app(window);
-            let title = window_title(window);
-            let browser = app
+            let private = app
                 .as_deref()
-                .map(|name| BROWSER_EXES.contains(&name))
+                .map(is_private_app)
                 .unwrap_or(false);
+            let title = if private {
+                None
+            } else {
+                window_title(window)
+            };
+            let browser = !private
+                && app
+                    .as_deref()
+                    .map(|name| BROWSER_EXES.contains(&name))
+                    .unwrap_or(false);
             let mut url = None;
             if browser {
                 if window as isize != cached_window
@@ -778,29 +885,93 @@ fn classify_context(
     let app_display = app_label(&app, title);
 
     if BROWSER_EXES.contains(&app.as_str()) {
-        if let Some(host) = url.as_deref().and_then(url_host) {
-            let (key, label) = if let Some((key, label)) = site_label(&host) {
-                (format!("site:{key}"), label.to_string())
-            } else if let Some(label) = alias_for_host(&host, aliases) {
-                (format!("web:{host}"), label.to_string())
-            } else {
-                (format!("web:{host}"), host)
-            };
-            return Classification {
-                parent_key: app_key,
-                parent_label: app_display,
-                key,
-                label,
-            };
-        }
+        let (key, label) = match url.as_deref().and_then(url_host) {
+            Some(host) => {
+                if let Some((key, label)) = site_label(&host) {
+                    (format!("site:{key}"), label.to_string())
+                } else if let Some(label) = alias_for_host(&host, aliases) {
+                    (format!("web:{host}"), label.to_string())
+                } else {
+                    (format!("web:{host}"), host)
+                }
+            }
+            None if url.as_deref().map(is_internal_url).unwrap_or(false) => (
+                INTERNAL_PAGE_KEY.to_string(),
+                INTERNAL_PAGE_LABEL.to_string(),
+            ),
+            None => (
+                UNKNOWN_PAGE_KEY.to_string(),
+                UNKNOWN_PAGE_LABEL.to_string(),
+            ),
+        };
+        return Classification {
+            parent_key: app_key,
+            parent_label: app_display,
+            key,
+            label,
+        };
     }
 
-    Classification {
+    let fallback = Classification {
         parent_key: app_key.clone(),
         parent_label: app_display.clone(),
-        key: app_key,
-        label: app_display,
+        key: app_key.clone(),
+        label: app_display.clone(),
+    };
+    if is_private_app(&app) {
+        return fallback;
     }
+
+    let (key, label) = match window_label(&app_display, title) {
+        Some(label) => (format!("win:{}", label.to_lowercase()), label),
+        None => (
+            UNKNOWN_WINDOW_KEY.to_string(),
+            UNKNOWN_WINDOW_LABEL.to_string(),
+        ),
+    };
+    Classification {
+        parent_key: app_key,
+        parent_label: app_display,
+        key,
+        label,
+    }
+}
+
+fn window_label(app_display: &str, title: Option<&str>) -> Option<String> {
+    let raw = title?
+        .trim()
+        .trim_start_matches(['●', '○', '•', '*', '·'])
+        .trim_start();
+    if raw.is_empty() {
+        return None;
+    }
+    let normalized = raw.replace(" – ", " - ").replace(" — ", " - ");
+    let mut parts: Vec<&str> = normalized
+        .split(" - ")
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    while parts.len() > 1 && is_window_suffix(parts[parts.len() - 1], app_display) {
+        parts.pop();
+    }
+    if parts.is_empty() || (parts.len() == 1 && is_window_suffix(parts[0], app_display)) {
+        return None;
+    }
+    let label = parts.join(" · ");
+    if label.eq_ignore_ascii_case(app_display) {
+        return None;
+    }
+    Some(label.chars().take(80).collect())
+}
+
+fn is_window_suffix(part: &str, app_display: &str) -> bool {
+    let lower = part.to_lowercase();
+    let app_lower = app_display.to_lowercase();
+    lower == app_lower
+        || lower.starts_with(&format!("{app_lower} "))
+        || WINDOW_TITLE_SUFFIXES
+            .iter()
+            .any(|name| lower == *name || lower.starts_with(&format!("{name} ")))
 }
 
 fn alias_for_host<'a>(
@@ -1006,14 +1177,18 @@ fn read_site_aliases(path: &Path) -> HashMap<String, String> {
     }
 }
 
-fn url_host(url: &str) -> Option<String> {
-    let trimmed = url.trim();
-    let lower = trimmed.to_lowercase();
-    if lower.starts_with("chrome://")
+fn is_internal_url(url: &str) -> bool {
+    let lower = url.trim().to_lowercase();
+    lower.starts_with("chrome://")
         || lower.starts_with("edge://")
         || lower.starts_with("about:")
         || lower.starts_with("file://")
-    {
+        || lower.starts_with("view-source:")
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if is_internal_url(trimmed) {
         return None;
     }
     let rest = trimmed
@@ -1110,10 +1285,18 @@ fn app_label(app: &str, title: Option<&str>) -> String {
         "idea64.exe" => "IntelliJ IDEA",
         "pycharm64.exe" => "PyCharm",
         "devenv.exe" => "Visual Studio",
-        "wechat.exe" => "微信",
-        "qq.exe" => "QQ",
+        "wechat.exe" | "weixin.exe" => "微信",
+        "wxwork.exe" => "企业微信",
+        "qq.exe" | "qqnt.exe" => "QQ",
         "dingtalk.exe" => "钉钉",
         "feishu.exe" | "lark.exe" => "飞书",
+        "telegram.exe" => "Telegram",
+        "slack.exe" => "Slack",
+        "teams.exe" | "ms-teams.exe" => "Microsoft Teams",
+        "whatsapp.exe" => "WhatsApp",
+        "line.exe" => "LINE",
+        "kook.exe" => "KOOK",
+        "yy.exe" => "YY",
         "steam.exe" => "Steam",
         "discord.exe" => "Discord",
         "spotify.exe" => "Spotify",
@@ -1352,7 +1535,29 @@ pub fn snapshot(store: &KeyboardStore, mut days: Vec<DayRange>, now_ms: i64) -> 
             );
         }
     }
-    apps.extend(merged_children.into_values());
+    let mut children: Vec<AppStat> = merged_children.into_values().collect();
+    let mut keys_by_parent: HashMap<String, HashSet<String>> = HashMap::new();
+    for child in &children {
+        if let Some(parent) = &child.parent {
+            keys_by_parent
+                .entry(parent.clone())
+                .or_default()
+                .insert(child.app.clone());
+        }
+    }
+    let unknown_only: HashSet<String> = keys_by_parent
+        .into_iter()
+        .filter(|(_, keys)| keys.len() == 1 && keys.contains(UNKNOWN_WINDOW_KEY))
+        .map(|(parent, _)| parent)
+        .collect();
+    children.retain(|child| {
+        child
+            .parent
+            .as_ref()
+            .map(|parent| !unknown_only.contains(parent))
+            .unwrap_or(true)
+    });
+    apps.extend(children);
     apps.sort_by(|left, right| {
         right
             .active_ms
@@ -1623,15 +1828,74 @@ mod tests {
 
         let context =
             classify_context(Some("code.exe"), None, Some("project - VS Code"), &HashMap::new());
-        assert_eq!(context.key, "app:code.exe");
-        assert_eq!(context.label, "VS Code");
+        assert_eq!(context.key, "win:project");
+        assert_eq!(context.label, "project");
         assert_eq!(context.parent_key, "app:code.exe");
+
+        let context = classify_context(
+            Some("pycharm64.exe"),
+            None,
+            Some("app.py – Toccata – PyCharm 2024.3"),
+            &HashMap::new(),
+        );
+        assert_eq!(context.key, "win:app.py · toccata");
+        assert_eq!(context.label, "app.py · Toccata");
+        assert_eq!(context.parent_key, "app:pycharm64.exe");
 
         let context =
             classify_context(Some("chrome.exe"), Some("chrome://newtab"), None, &HashMap::new());
-        assert_eq!(context.key, "app:chrome.exe");
-        assert_eq!(context.label, "Google Chrome");
+        assert_eq!(context.key, INTERNAL_PAGE_KEY);
+        assert_eq!(context.label, "浏览器内部页");
         assert_eq!(context.parent_key, "app:chrome.exe");
+    }
+
+    #[test]
+    fn browser_events_without_url_stay_under_the_browser() {
+        let context =
+            classify_context(Some("msedge.exe"), None, None, &HashMap::new());
+        assert_eq!(context.key, UNKNOWN_PAGE_KEY);
+        assert_eq!(context.label, "未识别页面");
+        assert_eq!(context.parent_key, "app:msedge.exe");
+
+        let context = classify_context(
+            Some("msedge.exe"),
+            Some("dee"),
+            Some("DeepSeek"),
+            &HashMap::new(),
+        );
+        assert_eq!(context.key, UNKNOWN_PAGE_KEY);
+        assert_eq!(context.label, "未识别页面");
+        assert_eq!(context.parent_key, "app:msedge.exe");
+    }
+
+    #[test]
+    fn social_apps_never_expose_window_titles() {
+        let context = classify_context(
+            Some("qq.exe"),
+            None,
+            Some("张三 - QQ"),
+            &HashMap::new(),
+        );
+        assert_eq!(context.key, "app:qq.exe");
+        assert_eq!(context.label, "QQ");
+        assert_eq!(context.parent_key, "app:qq.exe");
+
+        let context = classify_context(
+            Some("wxwork.exe"),
+            None,
+            Some("项目群 - 企业微信"),
+            &HashMap::new(),
+        );
+        assert_eq!(context.key, "app:wxwork.exe");
+        assert_eq!(context.label, "企业微信");
+    }
+
+    #[test]
+    fn apps_without_titles_use_unknown_window_bucket() {
+        let context = classify_context(Some("notepad.exe"), None, None, &HashMap::new());
+        assert_eq!(context.key, UNKNOWN_WINDOW_KEY);
+        assert_eq!(context.label, UNKNOWN_WINDOW_LABEL);
+        assert_eq!(context.parent_key, "app:notepad.exe");
     }
 
     #[test]
